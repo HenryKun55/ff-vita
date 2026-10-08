@@ -24,7 +24,7 @@ enum {
     NS_COUNT
 };
 
-extern int g_nstat;   /* stats on */
+extern int g_nstat;   /* stats on: 1 counts, 2 also runs the (slow) vertex buffer verifier */
 
 uint64_t nstat_now(void);   /* microseconds */
 void nstat_add(int id, uint32_t calls, uint64_t items, uint64_t us);

@@ -2630,7 +2630,7 @@ static void buf_Lock(Ctx *c)
         return;
     }
     uint32_t fl = ARG(4);
-    if (g_nstat && b->copy_draws && !(fl & 0x10u)) {
+    if (g_nstat >= 2 && b->copy_draws && !(fl & 0x10u)) {
         verify_copy_buffer(b);
         nstat_watch(g_mem + b->mem, g_mem + b->mem + b->size);
     }

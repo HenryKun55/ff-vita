@@ -54,13 +54,13 @@ static void nstat_init(void)
     if (f) {
         char buf[128];
         while (fgets(buf, sizeof(buf), f))
-            if (!strncmp(buf, "stats=1", 7))
-                g_nstat = 1;
+            if (!strncmp(buf, "stats=", 6) && buf[6] >= '1' && buf[6] <= '9')
+                g_nstat = buf[6] - '0';
         fclose(f);
     }
 #else
     const char *e = getenv("FF_STATS");
-    g_nstat = e && e[0] == '1';
+    g_nstat = e && e[0] >= '1' && e[0] <= '9' ? e[0] - '0' : 0;
 #endif
     if (g_nstat)
         rt_log("stats: on (per-frame averages every 120 frames)");
