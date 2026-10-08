@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.20)
 project(ff-port C)
 
+# ccache, when installed: the generated code is large and mostly unchanged between builds.
+find_program(CCACHE_PROGRAM ccache)
+if(CCACHE_PROGRAM)
+    set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+endif()
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 if(NOT CMAKE_BUILD_TYPE)
@@ -66,7 +72,9 @@ target_include_directories(ff_recomp PUBLIC runtime/include "${GEN_DIR}")
 # Guest code relies on x86 semantics: wrapping signed arithmetic, type punning
 # and signed char. Without these, GCC (Vita) and clang (macOS) optimize the
 # recompiled code differently.
-target_compile_options(ff_recomp PRIVATE -Wall -Wextra -O2 -fwrapv -fno-strict-aliasing -fsigned-char
+# -O2 by default; -Os makes a smaller eboot (the generated code is most of it).
+set(FF_RECOMP_OPT "-O2" CACHE STRING "Optimization flag of the generated code")
+target_compile_options(ff_recomp PRIVATE -Wall -Wextra ${FF_RECOMP_OPT} -fwrapv -fno-strict-aliasing -fsigned-char
                        -Wno-unused-label -Wno-unused-variable -Wno-unused-but-set-variable)
 # Generated-code variants (see runtime/include/recomp.h). FF_X87_FLOAT trades x87
 # exactness for speed; FF_X87_CHECK verifies the static x87 stack analysis.
@@ -110,10 +118,10 @@ if(VITA)
         SceAudio_stub SceAudioIn_stub SceDisplay_stub SceGxm_stub SceCommonDialog_stub SceSysmodule_stub
         ScePower_stub SceAppMgr_stub SceAppUtil_stub SceIme_stub SceLibKernel_stub SceProcessmgr_stub
         SceNet_stub SceNetCtl_stub SceIofilemgr_stub
-        curl ssl crypto z zstd stdc++ pthread m c)
+        curl ssl crypto png z zstd stdc++ pthread m c)
     # The update check (shim/src/vita_update.c) and its start-up screen (vita_bootui.c).
     target_compile_definitions(ff PRIVATE FF_UPDATE_REPO="${FF_UPDATE_REPO}")
-    # The LiveArea pictures and the boot picture come from the key art in gamedata/art
+    # The LiveArea pictures (pic0.png is also the boot picture) come from the key art in gamedata/art
     # (or the game's own logo), so they are made here instead of being kept in the repo.
     get_filename_component(FF_GAME_DIR "${FF_EXE}" DIRECTORY)
     set(FF_SCE_SYS "${CMAKE_BINARY_DIR}/sce_sys")
@@ -153,7 +161,6 @@ if(VITA)
         VERSION ${VITA_VERSION}
         NAME "Freedom Fighters"
         FILE ${FF_SCE_SYS} sce_sys
-             "${CMAKE_BINARY_DIR}/boot.rgba" boot.rgba
              "${CMAKE_BINARY_DIR}/updater.bin.out" updater.bin
              # CA certificates for the update check's HTTPS (curl.se/ca, MPL 2.0)
              "${FF_UPDATER_DIR}/cacert.pem" cacert.pem

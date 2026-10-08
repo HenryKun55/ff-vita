@@ -9,8 +9,8 @@ becomes:
   sce_sys/pic0.png                        960x544  shown while the app starts
   sce_sys/livearea/contents/bg.png        840x500  LiveArea background, with the credits
   sce_sys/livearea/contents/startup.png   280x158  LiveArea start gate (logo)
-All are 8-bit palette PNGs, as the LiveArea expects. Next to sce_sys, boot.rgba
-(960x544, RGBA bytes) is what platform_vita.c shows while the game starts.
+All are 8-bit palette PNGs, as the LiveArea expects; pic0.png is also what
+platform_vita.c shows while the game starts.
 
 The pictures are derived from the retail data, so they are not kept in the
 repo: CMake writes them into <build>/sce_sys next to a copy of
@@ -177,10 +177,6 @@ def main():
         bg.paste(fit(art, (840, 420), scale=0.85), (0, 0))
         save_png8(draw_credits(bg, version), os.path.join(out, 'livearea', 'contents', 'bg.png'))
         save_png8(fit(art, (280, 158), scale=0.95), os.path.join(out, 'livearea', 'contents', 'startup.png'))
-    raw = os.path.join(os.path.dirname(os.path.abspath(out)), 'boot.rgba')
-    with open(raw, 'wb') as f:
-        f.write(boot.convert('RGBA').tobytes())
-    print('wrote %s (960x544 RGBA)' % raw)
     if os.path.exists(icon_path):
         icon = cover(Image.open(icon_path).convert('RGB'), (128, 128))
     else:

@@ -15,6 +15,7 @@
 #include <psp2/kernel/threadmgr.h>
 #include <psp2/power.h>
 #include <psp2/touch.h>
+#include <png.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,9 +28,9 @@ static int mode_w = 640, mode_h = 480;
 static int gl_ready;
 
 /* ---- boot picture --------------------------------------------------------
- * vitaGL only starts with the display mode, a few seconds in. Meanwhile app0:boot.rgba
- * (the key art at 960x544, made by tools/make_vita_livearea.py) is shown from a plain
- * display buffer, with the version and the update check drawn over it
+ * vitaGL only starts with the display mode, a few seconds in. Meanwhile the app's
+ * pic0.png (the key art at 960x544, made by tools/make_vita_livearea.py) is shown
+ * from a plain display buffer, with the version and the update check drawn over it
  * (vita_bootui.c); it is released once vitaGL has presented two frames. */
 #define BOOT_FB_SIZE 0x200000u   /* 960 x 544 x 4 rounded up to the CDRAM granularity */
 
@@ -37,24 +38,36 @@ static SceUID boot_fb_block = -1;
 static uint32_t *boot_fb_base;
 static int boot_fb_swaps;
 
+/* Decodes app0:sce_sys/pic0.png (960x544) into fb as R, G, B, A bytes. */
+static int boot_picture_decode(uint8_t *fb)
+{
+    png_image img;
+    memset(&img, 0, sizeof(img));
+    img.version = PNG_IMAGE_VERSION;
+    if (!png_image_begin_read_from_file(&img, "app0:sce_sys/pic0.png"))
+        return 0;
+    if (img.width != SCREEN_W || img.height != SCREEN_H) {
+        png_image_free(&img);
+        return 0;
+    }
+    img.format = PNG_FORMAT_RGBA;
+    int ok = png_image_finish_read(&img, NULL, fb, SCREEN_W * 4, NULL) != 0;
+    png_image_free(&img);
+    return ok;
+}
+
 static void boot_picture_show(void)
 {
-    FILE *f = fopen("app0:boot.rgba", "rb");
-    if (!f) {
-        rt_log("boot picture: app0:boot.rgba missing");
-        return;
-    }
     SceUID block = sceKernelAllocMemBlock("ff_boot_fb", SCE_KERNEL_MEMBLOCK_TYPE_USER_CDRAM_RW, BOOT_FB_SIZE, NULL);
     void *base = NULL;
-    if (block < 0 || sceKernelGetMemBlockBase(block, &base) < 0) {
-        fclose(f);
+    if (block < 0 || sceKernelGetMemBlockBase(block, &base) < 0)
+        return;
+    memset(base, 0, BOOT_FB_SIZE);
+    if (!boot_picture_decode(base)) {
+        rt_log("boot picture: app0:sce_sys/pic0.png not usable");
+        sceKernelFreeMemBlock(block);
         return;
     }
-    memset(base, 0, BOOT_FB_SIZE);
-    size_t n = fread(base, 4, SCREEN_W * SCREEN_H, f);
-    fclose(f);
-    if (n != SCREEN_W * SCREEN_H)
-        rt_log("boot picture: app0:boot.rgba is short (%u pixels)", (unsigned)n);
     SceDisplayFrameBuf dfb;
     memset(&dfb, 0, sizeof(dfb));
     dfb.size = sizeof(dfb);
@@ -131,8 +144,12 @@ void platform_set_video_mode(int w, int h)
 void platform_gl_init(void)
 {
     if (!gl_ready) {
-        /* 8 MiB for immediate-mode/legacy state; textures go to vitaGL's own pools. */
-        vglInitExtended(0x800000, SCREEN_W, SCREEN_H, 0x1000000, SCE_GXM_MULTISAMPLE_NONE);
+        /* 8 MiB for immediate-mode/legacy state; textures go to vitaGL's own pools.
+         * vitaGL takes all the main RAM but ram_threshold for its pools: what stays
+         * free is what the game's threads (their stacks), the audio, the update
+         * check and the shader compiler allocate from the kernel. 16 MiB was too
+         * little for Freedom Fighters (thread creation and shader compiles failed). */
+        vglInitExtended(0x800000, SCREEN_W, SCREEN_H, 0x3000000, SCE_GXM_MULTISAMPLE_NONE);
         gl_ready = 1;
     }
 }
