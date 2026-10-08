@@ -37,6 +37,8 @@ LOG=${TMPDIR:-/tmp}/ff_qa_vita3k.log
 MATCH="$CONF"   # in this instance's command line only
 
 [ -f "$BUILD/ff.vpk" ] || { echo "no $BUILD/ff.vpk; build first" >&2; exit 1; }
+BUILD=$(cd "$BUILD" && pwd)   # absolute: the install below runs in another directory
+OUT=$(mkdir -p "$OUT" && cd "$OUT" && pwd)
 [ -x "$VITA3K" ] || { echo "no Vita3K at $VITA3K" >&2; exit 1; }
 if pgrep -f "$MATCH" > /dev/null; then
     echo "a QA Vita3K instance is already running" >&2
