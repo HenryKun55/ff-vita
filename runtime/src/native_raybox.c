@@ -13,6 +13,7 @@
  * coordinate of the hit point. Callers test al only. */
 #include "recomp.h"
 #include "runtime.h"
+#include "native.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -35,16 +36,12 @@ static inline void stf(uint32_t a, float v) { memcpy(g_mem + a, &v, 4); }
 /* a <= b for the guest's `fcomp; test ah, 0x41; jp` (unordered counts as above). */
 static inline int le(float a, float b) { return a <= b; }
 
-static uint32_t segment_box(uint32_t esp)
+int ff_segment_box(const float box[6], const float o[3], const float d[3], float *t_out, float *dz_slot)
 {
-    const uint32_t A = esp + 4u;   /* first argument */
-    const float minx = ldf(A), miny = ldf(A + 4u), minz = ldf(A + 8u);
-    const float maxx = ldf(A + 12u), maxy = ldf(A + 16u), maxz = ldf(A + 20u);
-    const float ox = ldf(A + 24u), oy = ldf(A + 28u), oz = ldf(A + 32u);
-    const float dx = ldf(A + 36u), dy = ldf(A + 40u), dz = ldf(A + 44u);
-    const uint32_t out = RD32(A + 48u);
+    const float minx = box[0], miny = box[1], minz = box[2], maxx = box[3], maxy = box[4], maxz = box[5];
+    const float ox = o[0], oy = o[1], oz = o[2], dx = d[0], dy = d[1], dz = d[2];
     if (le(minx, ox) && le(ox, maxx) && le(miny, oy) && le(oy, maxy) && le(minz, oz) && le(oz, maxz)) {
-        WR32(out, 0);
+        *t_out = 0.0f;
         return 1;
     }
     float t0 = -1.0f, t1 = -1.0f, t2 = -1.0f;
@@ -54,28 +51,48 @@ static uint32_t segment_box(uint32_t esp)
         t1 = ((dy < 0.0f ? maxy : miny) - oy) / dy;
     if (dz != 0.0f)
         t2 = ((dz < 0.0f ? maxz : minz) - oz) / dz;
-    float t;
+    float t, slot;
+    int in;
     if (t0 >= t1 && t0 >= t2) {
         t = t0;
         float py = t * dy + oy, pz = t * dz + oz;
-        stf(A + 44u, pz);
-        if (miny > py || py > maxy || minz > pz || pz > maxz)
-            return 0;
+        slot = pz;
+        in = !(miny > py || py > maxy || minz > pz || pz > maxz);
     } else if (t1 >= t2) {
         t = t1;
         float pz = t * dz + oz, px = t * dx + ox;
-        stf(A + 44u, px);
-        if (minz > pz || pz > maxz || minx > px || px > maxx)
-            return 0;
+        slot = px;
+        in = !(minz > pz || pz > maxz || minx > px || px > maxx);
     } else {
         t = t2;
         float px = t * dx + ox, py = t * dy + oy;
-        stf(A + 44u, py);
-        if (minx > px || px > maxx || miny > py || py > maxy)
-            return 0;
+        slot = py;
+        in = !(minx > px || px > maxx || miny > py || py > maxy);
     }
-    stf(out, t);
+    if (dz_slot)
+        *dz_slot = slot;
+    if (!in)
+        return 0;
+    *t_out = t;
     return t >= 0.0f && t <= 1.0f;
+}
+
+static uint32_t segment_box(uint32_t esp)
+{
+    const uint32_t A = esp + 4u;   /* first argument */
+    float box[6], o[3], d[3];
+    for (int i = 0; i < 6; i++)
+        box[i] = ldf(A + 4u * (uint32_t)i);
+    for (int i = 0; i < 3; i++) {
+        o[i] = ldf(A + 24u + 4u * (uint32_t)i);
+        d[i] = ldf(A + 36u + 4u * (uint32_t)i);
+    }
+    const uint32_t out = RD32(A + 48u);
+    float t = ldf(out), slot = ldf(A + 44u);
+    const int r = ff_segment_box(box, o, d, &t, &slot);
+    stf(A + 44u, slot);
+    stf(out, t);
+    return (uint32_t)r;
 }
 
 static int on = -1;

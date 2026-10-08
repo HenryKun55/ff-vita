@@ -87,6 +87,13 @@ NATIVE = {
         (0x005F83B0, 31, '2052b11c3eb570f3acac63351149b4f44a9ea96d'),   # vector scale it calls
     ]),    # Segment / axis-aligned box test (runtime/src/native_raybox.c).
     0x005FF460: ('rt_native_segment_box', [(0x005FF460, 723, '65773ff6c1f03992cbff624ae5cfcaff2362de31')]),
+    # Segment query through the collision octree and its heap (runtime/src/native_octree.c).
+    0x006167C0: ('rt_native_octree_segment', [
+        (0x006167C0, 935, '4d5885745c490c10fe105733d91d61ca63c21f2a'),
+        (0x006162C0, 95, 'e767a8c016eebb5969f7e061ca721838ba58ef24'),
+        (0x00616320, 159, '5d140d90064cee2aaaf5993e0b641c9169e45b78'),
+        (0x006163C0, 96, 'dcc9c1eab35e8f0333e487c4bf8df8131ff5b471'),
+    ]),
     # Vertex colours into the lighting factors, and the lit colours back (runtime/src/native_vcolor.c).
     0x00691410: ('rt_native_colors_in', [(0x00691410, 413, 'a1401185b69977956634161713acd5dfcaab5386')]),
     0x006915B0: ('rt_native_colors_out', [(0x006915B0, 304, '78b1f8422fece34b16771082210a98e851f7de45')]),
