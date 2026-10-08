@@ -578,6 +578,54 @@ static void load_screen_ortho(int texel_snap)
     c_load_matrix(GL_MODELVIEW, identity_matrix);
 }
 
+#if defined(__vita__)
+/* vitaGL applies a scissor region only when it draws (a stencil pass that also
+ * obeys the depth state), not to glClear, which then clears the whole screen
+ * (the cutscene's white background over its black bars). A partial clear is a
+ * quad instead: the colour, and the depth at c->z, written over the rectangle. */
+static void clear_rect_quad(const ClearCmd *c, uint32_t i)
+{
+    const GLboolean cm = (c->mask & GL_COLOR_BUFFER_BIT) ? GL_TRUE : GL_FALSE;
+    glColorMask(cm, cm, cm, cm);
+    if (c->mask & GL_DEPTH_BUFFER_BIT) {
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_ALWAYS);
+        glDepthMask(GL_TRUE);
+    } else {
+        glDisable(GL_DEPTH_TEST);
+    }
+    glDisable(GL_SCISSOR_TEST);
+    glActiveTexture(GL_TEXTURE1);
+    glDisable(GL_TEXTURE_2D);
+    glActiveTexture(GL_TEXTURE0);
+    glDisable(GL_TEXTURE_2D);
+    glDisable(GL_LIGHTING);
+    glDisable(GL_FOG);
+    glDisable(GL_ALPHA_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_POLYGON_OFFSET_FILL);
+    c_viewport(0, 0, B.fb_w, B.fb_h);
+    c_depthrange(0.0f, 1.0f);
+    float m[16];
+    ortho_matrix(0, B.fb_w, 0, B.fb_h, -1, 1, m);
+    c_load_matrix(GL_MODELVIEW, identity_matrix);
+    c_load_matrix(GL_PROJECTION, m);
+    c_color(c->color[0], c->color[1], c->color[2], c->color[3]);
+    /* window depth z: ndc 2z - 1, eye -(2z - 1) under this ortho */
+    const float z = 1.0f - 2.0f * c->z;
+    const float x0 = (float)c->r[i].x, y0 = (float)c->r[i].y;
+    const float x1 = x0 + (float)c->r[i].w, y1 = y0 + (float)c->r[i].h;
+    glBegin(GL_QUADS);
+    glVertex3f(x0, y0, z);
+    glVertex3f(x1, y0, z);
+    glVertex3f(x1, y1, z);
+    glVertex3f(x0, y1, z);
+    glEnd();
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+}
+#endif
+
 void bk_clear(const void *p)
 {
     const ClearCmd *c = p;
@@ -598,6 +646,10 @@ void bk_clear(const void *p)
             glClear(c->mask);
             continue;
         }
+#if defined(__vita__)
+        clear_rect_quad(c, i);
+        continue;
+#endif
         if (c->restore_mask)
             glDepthMask(GL_FALSE);
         glEnable(GL_SCISSOR_TEST);
