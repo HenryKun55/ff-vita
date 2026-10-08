@@ -91,7 +91,10 @@ NATIVE = {
 
 # Native versions of a part of a function: hook address -> (host function,
 # continuation address, [(address, size, SHA-1)]).
-BLOCK_HOOKS = {}
+BLOCK_HOOKS = {
+    # Character skinning loop of 0x00694BF0, its x87 path (runtime/src/native_skin.c).
+    0x006953F3: ('rt_block_skin', 0x00695586, [(0x006953F3, 403, '63fefc0c4355aa81aac27d41265338bca7691cbc')]),
+}
 
 # Instruction emitters produce C with a few tokens that are expanded per code copy
 # (FuncGen.lower): ST(i), fpush(c, v), fpop(c) and FTOP address the x87 stack;
@@ -582,6 +585,10 @@ class FuncGen:
                 elif depth[s] != o:
                     conflict = True
         self.fdepth = depth
+        # A block hook reloads the x87 state like a call that leaves the stack as it is.
+        for hk in self.g.block_hooks:
+            if hk in self.fn.insns:
+                calls[hk] = (0, True)
         self.fcalls = calls
         if conflict or TOP in exits or len(exits) > 1:
             summary = TOP
@@ -821,7 +828,9 @@ class FuncGen:
             hook = self.g.block_hooks.get(a)
             if hook:
                 # Native version of the code from here to hook[1] (BLOCK_HOOKS).
-                assert not self.has_x87() and hook[1] in fn.insns, 'block hook %08X' % a
+                # SPILL/RELOAD also synchronise the x87 state with the context (the
+                # native code does not touch it).
+                assert hook[1] in fn.insns, 'block hook %08X' % a
                 code = ['SPILL; if (%s(c)) { RELOAD; goto L_%08X; } RELOAD;' % hook] + code
             nxt = a + ins.size
             falls = self.falls_through(ins)
@@ -2316,6 +2325,8 @@ class Generator:
             # Native versions and HLE routines hooked at function entries.
             for name in sorted(set(self.hle.values())):
                 f.write('int %s(Ctx *c, uint32_t esp, uint32_t ecx, uint32_t eax, uint64_t *ret);\n' % name)
+            for name in sorted({hk[0] for hk in self.block_hooks.values()}):
+                f.write('int %s(Ctx *c);\n' % name)
             f.write('\n')
             for cname in sorted(self.imports_used):
                 f.write('void %s(Ctx *c);\n' % cname)
