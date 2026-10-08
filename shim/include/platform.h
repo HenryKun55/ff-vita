@@ -30,8 +30,11 @@ void render_shutdown(void);
 
 /* Pump host events: posts Win32 messages and updates the input state below. */
 void platform_pump(void);
-/* Renderer: step to the next live diagnostic mode. */
+/* Renderer: step to the next live diagnostic mode, or set one. */
 void render_diag_cycle(void);
+void render_diag_set(int mode);
+/* Renderer: screenshot of the next presented frame under `name` (QA scripts). */
+void render_shot_request(const char *name);
 int render_overlay_enabled(void);
 /* Block until at least one event is available, then pump. */
 void platform_wait(void);

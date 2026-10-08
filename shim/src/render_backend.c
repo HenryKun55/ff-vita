@@ -1008,6 +1008,38 @@ static void apply_states(const DrawCmd *d)
     valid = 1;
 }
 
+/* Polygon offset units of a D3D ZBIAS: 84 per step (5e-6 of the depth range in
+ * 24 bits). On the Vita (GXM depth bias) the same scale removed the decal
+ * z-fighting in a sweep of 2..84 in Vita3K (tools/qa_vita3k.sh); ff.cfg can
+ * override it there (zbias_units=, zbias_max= a cap). */
+static float zbias_units(int zbias)
+{
+    static float per = -1.0f, cap = 0.0f;
+    if (per < 0.0f) {
+#if defined(__vita__)
+        per = 84.0f;
+        cap = 0.0f;
+        FILE *f = fopen("ux0:data/ff/ff.cfg", "r");
+        if (f) {
+            char buf[128];
+            while (fgets(buf, sizeof(buf), f)) {
+                if (!strncmp(buf, "zbias_units=", 12))
+                    per = strtof(buf + 12, NULL);
+                else if (!strncmp(buf, "zbias_max=", 10))
+                    cap = strtof(buf + 10, NULL);
+            }
+            fclose(f);
+        }
+#else
+        per = 84.0f;
+        cap = 0.0f;
+#endif
+        rt_log("zbias: %.1f depth units per step%s", (double)per, cap > 0.0f ? " (capped)" : "");
+    }
+    float u = per * (float)zbias;
+    return cap > 0.0f && u > cap ? cap : u;
+}
+
 static void apply_states_now(const DrawCmd *d)
 {
     const int pretransformed = d->L.pretransformed;
@@ -1021,11 +1053,12 @@ static void apply_states_now(const DrawCmd *d)
         glDisable(GL_DEPTH_TEST);
     }
     glDepthMask(d->zwrite ? GL_TRUE : GL_FALSE);
-    /* D3DRS_ZBIAS (0..16): coplanar decals (shadows, dirt) drawn over a surface
-     * win the depth test. */
+    /* D3DRS_ZBIAS (0..16): coplanar decals (shadows, light, dirt) drawn over a
+     * surface win the depth test. One ZBIAS step is 5e-6 of the depth range (as
+     * Wine's d3d8 maps it), about 84 units of a 24-bit depth buffer. */
     if (d->zbias && !pretransformed) {
         glEnable(GL_POLYGON_OFFSET_FILL);
-        glPolygonOffset(-1.0f, -2.0f * (float)d->zbias);
+        glPolygonOffset(0.0f, -zbias_units((int)d->zbias));
     } else {
         glDisable(GL_POLYGON_OFFSET_FILL);
     }

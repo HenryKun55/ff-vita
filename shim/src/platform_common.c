@@ -60,7 +60,9 @@ void platform_key(uint8_t dik, int down)
  * Actions: a DIK code in hex (tap), "mx+N"/"my+N" relative mouse motion, "lmb" click,
  * "pad+N"/"pad-N" press/release pad control N (hex, PadControl in pad_input.h) the
  * way the Vita's pad does (shim/src/pad_input.c), "key+K"/"key-K" hold/release DIK
- * code K (hex). */
+ * code K (hex), "diag=N" renderer diagnostic mode N, "shot=NAME" a screenshot of
+ * the next frame named NAME (Vita: captured from the Vita3K window by
+ * tools/qa_vita3k.sh), "quit" end the process. */
 void platform_scripted_input(void)
 {
     static const char *script;
@@ -125,6 +127,19 @@ void platform_scripted_input(void)
         char buf[32];
         snprintf(buf, sizeof(buf), "%.*s", (int)n, act);
         rt_log("[input] t=%lu %s", at, buf);
+        if (!strncmp(buf, "diag=", 5) || !strncmp(buf, "shot=", 5) || !strcmp(buf, "quit")) {
+            if (buf[0] == 'd')
+                render_diag_set(atoi(buf + 5));
+            else if (buf[0] == 's')
+                render_shot_request(buf + 5);
+            else {
+                rt_log("[input] quit");
+                platform_shutdown();
+                exit(0);
+            }
+            script = end ? end + 1 : NULL;
+            continue;
+        }
         if (strcmp(buf, "trace") == 0) {
             g_trace_next_frame = 1;   /* log the next frame's draws and save it */
             script = end ? end + 1 : NULL;

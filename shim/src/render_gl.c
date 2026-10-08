@@ -217,6 +217,26 @@ int render_pk_no_compact(void)
     return diag_mode == DIAG_NO_COMPACT;
 }
 
+void render_diag_set(int mode)
+{
+    if (mode < 0 || mode >= DIAG_COUNT)
+        return;
+    diag_mode = mode;
+    g_tex_epoch++;
+    rt_log("diagnostic mode %d: %s", diag_mode, diag_names[diag_mode]);
+}
+
+/* A screenshot named `name` of the next presented frame (QA scripts). Desktop:
+ * <name>.bmp in the current directory. Vita: ux0:data/ff/shot_now.txt holds the
+ * name while the frame is on screen, for a capture of the Vita3K window
+ * (tools/qa_vita3k.sh): Vita3K does not read rendered frames back. */
+static char shot_request[64];
+
+void render_shot_request(const char *name)
+{
+    snprintf(shot_request, sizeof(shot_request), "%s", name);
+}
+
 void render_diag_cycle(void)
 {
     diag_mode = (diag_mode + 1) % DIAG_COUNT;
@@ -465,6 +485,42 @@ static void maybe_screenshot(void)
 {
     static int every = -1;
     static unsigned frame;
+    if (shot_request[0]) {
+#if defined(__vita__)
+        FILE *sf = fopen("ux0:data/ff/shot_now.txt", "w");
+        if (sf) {
+            fputs(shot_request, sf);
+            fclose(sf);
+        }
+        rt_log("shot %s requested (external capture)", shot_request);
+        shot_request[0] = 0;
+#else
+        uint8_t *spx = malloc((size_t)fb_w * (size_t)fb_h * 4u);
+        glPixelStorei(GL_PACK_ALIGNMENT, 4);
+        glReadPixels(0, 0, fb_w, fb_h, GL_BGRA, GL_UNSIGNED_BYTE, spx);
+        char sname[96];
+        snprintf(sname, sizeof(sname), "%s.bmp", shot_request);
+        FILE *sf = fopen(sname, "wb");
+        if (sf) {
+            uint32_t size = 54u + (uint32_t)fb_w * (uint32_t)fb_h * 4u;
+            uint8_t h[54] = { 'B', 'M' };
+            memcpy(h + 2, &size, 4);
+            h[10] = 54;
+            h[14] = 40;
+            int32_t w = fb_w, hh = fb_h;
+            memcpy(h + 18, &w, 4);
+            memcpy(h + 22, &hh, 4);
+            h[26] = 1;
+            h[28] = 32;
+            fwrite(h, 1, 54, sf);
+            fwrite(spx, 1, (size_t)fb_w * (size_t)fb_h * 4u, sf);
+            fclose(sf);
+        }
+        free(spx);
+        rt_log("shot %s saved", sname);
+        shot_request[0] = 0;
+#endif
+    }
     if (every < 0) {
         const char *e = getenv("FF_SHOT");
         every = e ? atoi(e) : 0;
@@ -1748,7 +1804,7 @@ static void trace_draw(int prim, const RVertex *v, uint32_t nv, uint32_t ni, int
     const StageState *s0 = &g_rs.stage[0], *s1 = &g_rs.stage[1];
     rt_log("draw prim %d nv %u ni %u tl %d n %d c %d s %d t %d box %.1f,%.1f-%.1f,%.1f col0 %08X | z %u/%u "
            "blend %u %u/%u atest %u %u/%u ck %u fog %u light %u cull %u | s0 c%u(%X,%X) a%u(%X,%X) tex %ux%u/%ubpp ck%d "
-           "| s1 c%u a%u tex %ux%u tf %08X | vp %d,%d %dx%d",
+           "| s1 c%u a%u tex %ux%u tf %08X | vp %d,%d %dx%d | zf %u zb %u w %.3f %.3f %.3f",
            prim, nv, ni, pretransformed, has_normal, has_color, has_spec, ntex, (double)x0, (double)y0, (double)x1,
            (double)y1, v[0].color, g_rs.rs[7], g_rs.rs[14], g_rs.rs[27], g_rs.rs[19], g_rs.rs[20], g_rs.rs[15],
            g_rs.rs[25], g_rs.rs[24], g_rs.rs[41], g_rs.rs[28], g_rs.rs[137], g_rs.rs[22], s0->colorop,
@@ -1756,7 +1812,8 @@ static void trace_draw(int prim, const RVertex *v, uint32_t nv, uint32_t ni, int
            s0->texture ? s0->texture->w : 0u, s0->texture ? s0->texture->h : 0u,
            s0->texture ? s0->texture->pf.bits : 0u, s0->texture ? s0->texture->has_ck : 0, s1->colorop,
            s1->alphaop, s1->texture ? s1->texture->w : 0u, s1->texture ? s1->texture->h : 0u, g_rs.rs[60],
-           g_rs.vp_x, g_rs.vp_y, g_rs.vp_w, g_rs.vp_h);
+           g_rs.vp_x, g_rs.vp_y, g_rs.vp_w, g_rs.vp_h, g_rs.rs[23], g_rs.rs[47], (double)g_rs.world[12],
+           (double)g_rs.world[13], (double)g_rs.world[14]);
     /* Depth range of the draw: screen z / rhw for pre-transformed vertices, clip z/w and w otherwise. */
     float zmin = 1e30f, zmax = -1e30f, wmin = 1e30f, wmax = -1e30f;
     float m[16];
