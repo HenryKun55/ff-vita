@@ -36,7 +36,10 @@ static inline void stf(uint32_t a, float v) { memcpy(g_mem + a, &v, 4); }
 /* a <= b for the guest's `fcomp; test ah, 0x41; jp` (unordered counts as above). */
 static inline int le(float a, float b) { return a <= b; }
 
-int ff_segment_box(const float box[6], const float o[3], const float d[3], float *t_out, float *dz_slot)
+/* inv: 1 / d per axis (NULL: divide, as the guest does). Multiplying by the
+ * reciprocal differs from the division in the last bit at most. */
+static int segment_box_impl(const float box[6], const float o[3], const float d[3], const float *inv, float *t_out,
+                            float *dz_slot)
 {
     const float minx = box[0], miny = box[1], minz = box[2], maxx = box[3], maxy = box[4], maxz = box[5];
     const float ox = o[0], oy = o[1], oz = o[2], dx = d[0], dy = d[1], dz = d[2];
@@ -45,12 +48,21 @@ int ff_segment_box(const float box[6], const float o[3], const float d[3], float
         return 1;
     }
     float t0 = -1.0f, t1 = -1.0f, t2 = -1.0f;
-    if (dx != 0.0f)
-        t0 = ((dx < 0.0f ? maxx : minx) - ox) / dx;
-    if (dy != 0.0f)
-        t1 = ((dy < 0.0f ? maxy : miny) - oy) / dy;
-    if (dz != 0.0f)
-        t2 = ((dz < 0.0f ? maxz : minz) - oz) / dz;
+    if (inv) {
+        if (dx != 0.0f)
+            t0 = ((dx < 0.0f ? maxx : minx) - ox) * inv[0];
+        if (dy != 0.0f)
+            t1 = ((dy < 0.0f ? maxy : miny) - oy) * inv[1];
+        if (dz != 0.0f)
+            t2 = ((dz < 0.0f ? maxz : minz) - oz) * inv[2];
+    } else {
+        if (dx != 0.0f)
+            t0 = ((dx < 0.0f ? maxx : minx) - ox) / dx;
+        if (dy != 0.0f)
+            t1 = ((dy < 0.0f ? maxy : miny) - oy) / dy;
+        if (dz != 0.0f)
+            t2 = ((dz < 0.0f ? maxz : minz) - oz) / dz;
+    }
     float t, slot;
     int in;
     if (t0 >= t1 && t0 >= t2) {
@@ -75,6 +87,16 @@ int ff_segment_box(const float box[6], const float o[3], const float d[3], float
         return 0;
     *t_out = t;
     return t >= 0.0f && t <= 1.0f;
+}
+
+int ff_segment_box(const float box[6], const float o[3], const float d[3], float *t_out, float *dz_slot)
+{
+    return segment_box_impl(box, o, d, NULL, t_out, dz_slot);
+}
+
+int ff_segment_box_inv(const float box[6], const float o[3], const float d[3], const float inv[3], float *t_out)
+{
+    return segment_box_impl(box, o, d, inv, t_out, NULL);
 }
 
 static uint32_t segment_box(uint32_t esp)

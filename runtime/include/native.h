@@ -13,4 +13,8 @@
  * receives it the same way. */
 int ff_segment_box(const float box[6], const float o[3], const float d[3], float *t, float *dz_slot);
 
+/* The same with the reciprocals of d given (queries testing many boxes with one
+ * segment): multiplications instead of divisions, equal to the last bit. */
+int ff_segment_box_inv(const float box[6], const float o[3], const float d[3], const float inv[3], float *t);
+
 #endif

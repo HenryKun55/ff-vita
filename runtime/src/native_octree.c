@@ -15,7 +15,9 @@
  *
  * The child octants are queued exactly as the guest's heap does (same order for
  * equal distances), the callbacks get the same arguments in the same order, and
- * the guest stack below the entry esp is used as the guest's frames would be. */
+ * the guest stack below the entry esp is used as the guest's frames would be.
+ * The box tests multiply by the segment's reciprocal direction instead of dividing
+ * (the last bit of t may differ from the guest's). */
 #include "recomp.h"
 #include "runtime.h"
 #include "native.h"
@@ -100,6 +102,9 @@ static uint32_t segment(Ctx *c, uint32_t node, uint32_t q, int32_t size, int32_t
     const uint32_t s = RD32(q + 0x30u), e = RD32(q + 0x34u);
     const float o[3] = { ldf(s), ldf(s + 4u), ldf(s + 8u) };
     const float d[3] = { ldf(e) - o[0], ldf(e + 4u) - o[1], ldf(e + 8u) - o[2] };
+    /* One division per axis for every box this query tests (unused for a zero axis). */
+    const float inv[3] = { d[0] != 0.0f ? 1.0f / d[0] : 0.0f, d[1] != 0.0f ? 1.0f / d[1] : 0.0f,
+                           d[2] != 0.0f ? 1.0f / d[2] : 0.0f };
     uint32_t flag = 0;
 
     /* The node's own items. */
@@ -111,7 +116,7 @@ static uint32_t segment(Ctx *c, uint32_t node, uint32_t q, int32_t size, int32_t
             for (int j = 0; j < 6; j++)
                 box[j] = (float)RD16(item + 4u + 2u * (uint32_t)j);
             float t = -1.0f;
-            if (ff_segment_box(box, o, d, &t, NULL) && ldf(q) > t)
+            if (ff_segment_box_inv(box, o, d, inv, &t) && ldf(q) > t)
                 flag |= callback(c, q, item, esp);
         }
     }
@@ -132,7 +137,7 @@ static uint32_t segment(Ctx *c, uint32_t node, uint32_t q, int32_t size, int32_t
                 const float box[6] = { (float)(x - half), (float)(y - half), (float)(z - half),
                                        (float)(x + half), (float)(y + half), (float)(z + half) };
                 float t = -1.0f;
-                if (ff_segment_box(box, o, d, &t, NULL) && n < 64) {
+                if (ff_segment_box_inv(box, o, d, inv, &t) && n < 64) {
                     const Entry en = { t, rec, oct };
                     heap_push(heap, n, &en);
                     n++;
