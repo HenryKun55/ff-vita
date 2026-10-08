@@ -79,7 +79,14 @@ PATCHES = {}
 # (host function, [(address, size, SHA-1)] of every piece of guest code the native
 # version reproduces). Emitted only when all the bytes match; FF_NATIVE=0 at
 # configure time leaves the hooks out.
-NATIVE = {}
+NATIVE = {
+    # Per-vertex lighting by the engine's lights (runtime/src/native_light.c).
+    0x006A5600: ('rt_native_light_vertices', [
+        (0x006A5600, 1973, '1be70f4eab47cd9da6b15826467ef32f69e193f8'),
+        (0x006A5DB8, 32, '4d99f504608ea571af1504ae7f74a14e73c250d2'),   # its jump tables
+        (0x005F83B0, 31, '2052b11c3eb570f3acac63351149b4f44a9ea96d'),   # vector scale it calls
+    ]),
+}
 
 # Native versions of a part of a function: hook address -> (host function,
 # continuation address, [(address, size, SHA-1)]).
@@ -2132,6 +2139,9 @@ class Generator:
                     'esp = c->r[4]; ebp = c->r[5]; esi = c->r[6]; edi = c->r[7]; } while (0)\n\n')
             for e in sorted(self.funcs):
                 f.write('%s;\nvoid w_%08X(Ctx *c);\n' % (FUNC_PROTO % e, e))
+            # Native versions and HLE routines hooked at function entries.
+            for name in sorted(set(self.hle.values())):
+                f.write('int %s(Ctx *c, uint32_t esp, uint32_t ecx, uint32_t eax, uint64_t *ret);\n' % name)
             f.write('\n')
             for cname in sorted(self.imports_used):
                 f.write('void %s(Ctx *c);\n' % cname)
