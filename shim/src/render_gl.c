@@ -1841,14 +1841,14 @@ static void trace_draw(int prim, const RVertex *v, uint32_t nv, uint32_t ni, int
         const DrawCmd *d = &rs_cur.d;
         rt_log("draw prim %d nv %u ni %u tl %d n %d c %d s %d t %d box %.1f,%.1f-%.1f,%.1f col0 %08X | z %u/%u "
                "blend %u %u/%u atest %u %u/%u ck %u fog %u light %u cull %u | s0 c%u(%X,%X) a%u(%X,%X) tex %u "
-               "| s1 c%u a%u tex %u tf %08X | vp %d,%d %dx%d world %.1f %.1f %.1f",
+               "| s1 c%u a%u tex %u tf %08X | vp %d,%d %dx%d world %.1f %.1f %.1f | zf %u zb %u",
                prim, nv, ni, pretransformed, has_normal, has_color, has_spec, ntex, (double)x0, (double)y0,
                (double)x1, (double)y1, v[0].color, d->zenable, d->zwrite, d->blend, d->srcblend, d->destblend,
                d->alphatest, d->alphafunc, d->alpharef, d->colorkey, d->fog, d->lighting, d->cullmode,
                d->stage[0].colorop, d->stage[0].colorarg1, d->stage[0].colorarg2, d->stage[0].alphaop,
                d->stage[0].alphaarg1, d->stage[0].alphaarg2, d->stage[0].tex, d->stage[1].colorop,
                d->stage[1].alphaop, d->stage[1].tex, d->tfactor, d->vp_x, d->vp_y, d->vp_w, d->vp_h,
-               (double)d->world[12], (double)d->world[13], (double)d->world[14]);
+               (double)d->world[12], (double)d->world[13], (double)d->world[14], d->zfunc, d->zbias);
         float fs, fe, fd;
         memcpy(&fs, &d->fogstart, 4);
         memcpy(&fe, &d->fogend, 4);
@@ -3033,8 +3033,8 @@ static int stage_textures_dirty(void)
 
 /* Partial snapshots: only the parts of the state that changed (most draws change
  * the world matrix and little else). */
-#define RS_WORDS 22u   /* DrawCmd zenable .. tfactor */
-_Static_assert(offsetof(DrawCmd, tfactor) - offsetof(DrawCmd, zenable) == (RS_WORDS - 1u) * 4u,
+#define RS_WORDS 23u   /* DrawCmd zenable .. zbias */
+_Static_assert(offsetof(DrawCmd, zbias) - offsetof(DrawCmd, zenable) == (RS_WORDS - 1u) * 4u,
                "DrawCmd render states must be contiguous");
 
 typedef struct PkRs {
@@ -3159,9 +3159,9 @@ static void pk_send_parts(uint32_t parts)
         RS_COPY(0, 7), RS_COPY(1, 8), RS_COPY(2, 9), RS_COPY(3, 14), RS_COPY(4, 15), RS_COPY(5, 19);
         RS_COPY(6, 20), RS_COPY(7, 22), RS_COPY(8, 23), RS_COPY(9, 24), RS_COPY(10, 25), RS_COPY(11, 27);
         RS_COPY(12, 28), RS_COPY(13, 34), RS_COPY(14, 35), RS_COPY(15, 36), RS_COPY(16, 37), RS_COPY(17, 38);
-        RS_COPY(18, 41), RS_COPY(19, 137), RS_COPY(20, 140), RS_COPY(21, 60);
+        RS_COPY(18, 41), RS_COPY(19, 137), RS_COPY(20, 140), RS_COPY(21, 60), RS_COPY(22, 47);
 #undef RS_COPY
-        _Static_assert(RS_WORDS == 22u, "RS_COPY list");
+        _Static_assert(RS_WORDS == 23u, "RS_COPY list");
         rq_end_fast();
     }
     if (parts & RS_PART_XF) {

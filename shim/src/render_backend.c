@@ -1173,6 +1173,32 @@ static float zbias_units(int zbias)
     return cap > 0.0f && u > cap ? cap : u;
 }
 
+#if defined(__vita__)
+/* Window-depth shift per ZBIAS step on the Vita. GXM's depth bias (what vitaGL
+ * makes of glPolygonOffset: integer factor and units) does not keep decals in
+ * front there (the living room's rug flickered in stripes in Vita3K), so decals
+ * also get their depth range moved toward the viewer: vitaGL turns glDepthRange
+ * into the viewport's z offset, exact everywhere. ff.cfg: zbias_depth=. */
+static float zbias_depth_step(void)
+{
+    static float step = -1.0f;
+    if (step < 0.0f) {
+        step = 2e-5f;
+        FILE *f = fopen("ux0:data/ff/ff.cfg", "r");
+        if (f) {
+            char buf[128];
+            while (fgets(buf, sizeof(buf), f))
+                if (!strncmp(buf, "zbias_depth=", 12))
+                    step = strtof(buf + 12, NULL);
+            fclose(f);
+        }
+        rt_log("zbias: depth range shift %g per step", (double)step);
+    }
+    return step;
+}
+#endif
+static float decal_dz;   /* depth range shift of the current draw (Vita) */
+
 static void apply_states_now(const DrawCmd *d)
 {
     const int pretransformed = d->L.pretransformed;
@@ -1189,12 +1215,13 @@ static void apply_states_now(const DrawCmd *d)
     /* D3DRS_ZBIAS (0..16): coplanar decals (shadows, light, dirt) drawn over a
      * surface win the depth test. One ZBIAS step is 5e-6 of the depth range (as
      * Wine's d3d8 maps it), about 84 units of a 24-bit depth buffer. */
-    /* Draws that test with LESSEQUAL or EQUAL and either blend without writing
+    /* (Not EQUAL draws: later passes over a surface, which need its exact depths.)
+     * Draws that test with LESSEQUAL and either blend without writing
      * depth or cut out with the alpha test are decals laid over a surface (the
      * floor's window light, shadows, rugs, stains): at least one step, since their
      * own vertices do not land on exactly the surface's depths. */
     int zb = (int)d->zbias;
-    if (!zb && d->zenable && (d->zfunc == 4u || d->zfunc == 3u) &&
+    if (!zb && d->zenable && d->zfunc == 4u &&
         ((d->blend && !d->zwrite) || (d->alphatest && d->alpharef)))
         zb = 1;
     if (zb && !pretransformed) {
@@ -1205,6 +1232,9 @@ static void apply_states_now(const DrawCmd *d)
     } else {
         glDisable(GL_POLYGON_OFFSET_FILL);
     }
+#if defined(__vita__)
+    decal_dz = zb && !pretransformed ? zbias_depth_step() * (float)zb : 0.0f;
+#endif
     if (d->blend) {
         glEnable(GL_BLEND);
         uint32_t sb = d->srcblend, db = d->destblend;
@@ -1324,9 +1354,9 @@ static void apply_transforms(const DrawCmd *d)
     mat_copy(p, d->proj);
     int remap = use_z_remap();
     if (remap)
-        c_depthrange(d->vp_minz, d->vp_maxz);
+        c_depthrange(d->vp_minz - decal_dz, d->vp_maxz - decal_dz);
     else
-        d3d_depth_range(d->vp_minz, d->vp_maxz);
+        d3d_depth_range(d->vp_minz - decal_dz, d->vp_maxz - decal_dz);
     if (remap)
         for (int r = 0; r < 4; r++)
             p[r * 4 + 2] = 2.0f * d->proj[r * 4 + 2] - d->proj[r * 4 + 3];
