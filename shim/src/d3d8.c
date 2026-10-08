@@ -719,10 +719,7 @@ static void vertex_bounds(const PkBufDraw *c, GuestVerts *g)
 #if defined(FF_PROFILE)
         rt_prof_render = PROF_H_RUN;
 #endif
-    } else {
-        bounds_hits++;
     }
-
     g->has_bounds = 1;
     for (int k = 0; k < 3; k++) {
         g->lo[k] = e->lo[k];
