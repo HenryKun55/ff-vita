@@ -21,6 +21,7 @@
 #include "recomp.h"
 #include "runtime.h"
 #include "native.h"
+#include "nstat.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -94,8 +95,6 @@ static uint32_t callback(Ctx *c, uint32_t q, uint32_t item, uint32_t esp)
     return (uint32_t)r & 0xFFu;
 }
 
-static int depth_guard;
-
 static uint32_t segment(Ctx *c, uint32_t node, uint32_t q, int32_t size, int32_t cx, int32_t cy, int32_t cz,
                         uint32_t esp)
 {
@@ -106,6 +105,8 @@ static uint32_t segment(Ctx *c, uint32_t node, uint32_t q, int32_t size, int32_t
     const float inv[3] = { d[0] != 0.0f ? 1.0f / d[0] : 0.0f, d[1] != 0.0f ? 1.0f / d[1] : 0.0f,
                            d[2] != 0.0f ? 1.0f / d[2] : 0.0f };
     uint32_t flag = 0;
+    if (g_nstat)
+        nstat_add(NS_OCTREE, 0, 1u, 0);
 
     /* The node's own items. */
     const uint32_t count = (RD16(node) >> 3) & 0xFFFu;
@@ -116,8 +117,13 @@ static uint32_t segment(Ctx *c, uint32_t node, uint32_t q, int32_t size, int32_t
             for (int j = 0; j < 6; j++)
                 box[j] = (float)RD16(item + 4u + 2u * (uint32_t)j);
             float t = -1.0f;
-            if (ff_segment_box_inv(box, o, d, inv, &t) && ldf(q) > t)
+            if (g_nstat)
+                nstat_add(NS_OCTREE_BOX, 0, 1u, 0);
+            if (ff_segment_box_inv(box, o, d, inv, &t) && ldf(q) > t) {
+                if (g_nstat)
+                    nstat_add(NS_OCTREE_CB, 0, 1u, 0);
                 flag |= callback(c, q, item, esp);
+            }
         }
     }
 
@@ -182,12 +188,26 @@ int rt_native_octree_segment(Ctx *c, uint32_t esp, uint32_t ecx, uint32_t eax, u
         on = !(k && k[0] == '0');
 #endif
     }
-    if (!on || depth_guard)
+    if (!on)
         return 0;
-    depth_guard = 1;
-    const uint32_t flag = segment(c, ecx, RD32(esp + 4u), (int32_t)RD32(esp + 8u), (int32_t)RD32(esp + 12u),
+    /* Reentrant: a callback's own queries (nested through 0x00616D10) come back here
+     * with their own guest stack. */
+    static int depth;
+    const uint32_t q = RD32(esp + 4u);
+    uint64_t t0 = 0;
+    if (g_nstat && depth == 0) {
+        t0 = nstat_now();
+        /* The same segment against the same tree and callback again this frame. */
+        const uint32_t s = RD32(q + 0x30u), e = RD32(q + 0x34u);
+        nstat_seen(NS_OCTREE, RD32(s) ^ RD32(s + 4u) * 3u ^ RD32(s + 8u) * 5u,
+                   RD32(e) ^ RD32(e + 4u) * 3u ^ RD32(e + 8u) * 5u, ecx ^ RD32(q + 4u));
+    }
+    depth++;
+    const uint32_t flag = segment(c, ecx, q, (int32_t)RD32(esp + 8u), (int32_t)RD32(esp + 12u),
                                   (int32_t)RD32(esp + 16u), (int32_t)RD32(esp + 20u), esp);
-    depth_guard = 0;
+    depth--;
+    if (g_nstat && depth == 0)
+        nstat_add(NS_OCTREE, 1u, 0, nstat_now() - t0);
     (void)eax;
     *ret = ((uint64_t)(esp + 4u + 0x14u) << 32) | flag;
     return 1;

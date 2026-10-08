@@ -79,6 +79,9 @@ static inline void stdcall_ret(Ctx *c, uint32_t value, int nargs)
 }
 
 void rt_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+/* Native code writing guest memory a vertex buffer may hold (shim/src/d3d8.c keeps
+ * the copies the render thread reads of the buffers the game rewrites up to date). */
+void d3d_mem_written(uint32_t addr, uint32_t len);
 void rt_fatal(Ctx *c, const char *fmt, ...) __attribute__((format(printf, 2, 3), noreturn));
 void rt_missing_import(Ctx *c, const char *name);
 /* Writes out the buffered log (before exiting). */

@@ -13,6 +13,7 @@
  * coordinate of the hit point. Callers test al only. */
 #include "recomp.h"
 #include "runtime.h"
+#include "nstat.h"
 #include "native.h"
 
 #include <math.h>
@@ -180,6 +181,13 @@ int rt_native_segment_box(Ctx *c, uint32_t esp, uint32_t ecx, uint32_t eax, uint
     }
 #endif
     (void)ecx;
+    if (g_nstat) {
+        nstat_add(NS_RAYBOX, 1u, 0, 0);
+        uint32_t h = 2166136261u;   /* the same arguments again this frame */
+        for (uint32_t i = 0; i < 44u; i += 4u)
+            h = (h ^ RD32(esp + 4u + i)) * 16777619u;
+        nstat_seen(NS_RAYBOX, h, RD32(esp + 4u), RD32(esp + 16u));
+    }
     uint32_t r = segment_box(esp);
     *ret = ((uint64_t)(esp + 4u) << 32) | (eax & 0xFFFFFF00u) | r;
     return 1;

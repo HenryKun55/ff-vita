@@ -12,6 +12,7 @@
  * are reloaded there, so only the output vertices are written. */
 #include "recomp.h"
 #include "runtime.h"
+#include "nstat.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -129,6 +130,18 @@ int rt_block_skin(Ctx *c)
         return 0;
     }
 #endif
+    NSTAT_BEGIN();
     skin(src, dst, palette, n);
+    d3d_mem_written(dst, 36u * n);
+    if (g_nstat) {
+        NSTAT_END(NS_SKIN, n);
+        nstat_written(dst, 36u * n);
+        /* The same mesh with the same pose (first bone's matrix) again this frame. */
+        const uint8_t *m = g_mem + palette + 16u * g_mem[src + 0x18u];
+        uint32_t h = 2166136261u;
+        for (int i = 0; i < 48; i++)
+            h = (h ^ m[i]) * 16777619u;
+        nstat_seen(NS_SKIN, src, n, h);
+    }
     return 1;
 }

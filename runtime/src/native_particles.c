@@ -13,6 +13,7 @@
  * does not move); afterwards the code reloads every register it reads. */
 #include "recomp.h"
 #include "runtime.h"
+#include "nstat.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -143,7 +144,13 @@ int rt_block_particles(Ctx *c)
         return 0;
     }
 #endif
+    NSTAT_BEGIN();
+    const uint32_t np = RD32(c->r[4] + 0x10u), pout = c->r[7] - 8u;
     particles(c);
+    d3d_mem_written(pout, np * 4u * 36u);
+    if (g_nstat)
+        nstat_written(pout, np * 4u * 36u);
+    NSTAT_END(NS_PARTICLES, np);
     return 1;
 }
 

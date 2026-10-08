@@ -15,6 +15,7 @@
  * before the truncation for these 8-bit inputs. */
 #include "recomp.h"
 #include "runtime.h"
+#include "nstat.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -144,6 +145,10 @@ int rt_native_colors_in(Ctx *c, uint32_t esp, uint32_t ecx, uint32_t eax, uint64
     }
 #endif
     const uint32_t v = RD32(esp + 4u), n = RD32(esp + 8u), flags = RD32(esp + 12u);
+    if (g_nstat) {
+        nstat_add(NS_COLORS_IN, 1u, n, 0);
+        nstat_seen(NS_COLORS_IN, v, n, flags);
+    }
     const int lit = (flags & 0x2000u) != 0;
     const float k = bits(lit ? 0x3C008081u : 0x3B808081u);   /* [0x727BE0] 1/127.5, [0x701B6C] 1/255 */
     for (uint32_t i = 0; i < n; i++) {
@@ -183,6 +188,12 @@ int rt_native_colors_out(Ctx *c, uint32_t esp, uint32_t ecx, uint32_t eax, uint6
     }
 #endif
     const uint32_t dst = RD32(esp + 4u), src = RD32(esp + 8u), n = RD32(esp + 12u);
+    if (g_nstat) {
+        nstat_add(NS_COLORS_OUT, 1u, n, 0);
+        nstat_seen(NS_COLORS_OUT, dst, src, n);
+        nstat_written(dst, 0x24u * n);
+    }
+    d3d_mem_written(dst, 0x24u * n);
     const float k = 127.5f;   /* [0x713488] */
     for (uint32_t i = 0; i < n; i++) {
         const uint32_t acc = ACC + 16u * i, d = dst + 0x24u * i, s = src + 0x24u * i;
@@ -197,5 +208,27 @@ int rt_native_colors_out(Ctx *c, uint32_t esp, uint32_t ecx, uint32_t eax, uint6
         WR32(d + 0x20u, RD32(s + 0x20u));
     }
     *ret = ((uint64_t)(esp + 4u + 12u) << 32) | 0u;
+    return 1;
+}
+
+/* 0x00690D20  void __stdcall copy_unlit(Vertex *dst, const Vertex *src, uint32_t n)
+ *   The vertices as they are, the colour (+0x18) halved per channel ((c >> 1) &
+ *   0x7F7F7F7F, the scale lit colours have). Returns eax dst + 4 + 0x24 n (n > 0). */
+int rt_native_copy_unlit(Ctx *c, uint32_t esp, uint32_t ecx, uint32_t eax, uint64_t *ret)
+{
+    (void)c;
+    (void)ecx;
+    if (!enabled())
+        return 0;
+    const uint32_t dst = RD32(esp + 4u), src = RD32(esp + 8u), n = RD32(esp + 12u);
+    for (uint32_t i = 0; i < n; i++) {
+        const uint32_t d = dst + 0x24u * i, s = src + 0x24u * i;
+        for (uint32_t w = 0; w < 0x24u; w += 4u)   /* word by word, as the guest */
+            WR32(d + w, w == 0x18u ? (RD32(s + w) >> 1) & 0x7F7F7F7Fu : RD32(s + w));
+    }
+    if (g_nstat)
+        nstat_written(dst, 0x24u * n);
+    d3d_mem_written(dst, 0x24u * n);
+    *ret = ((uint64_t)(esp + 4u + 12u) << 32) | (n ? dst + 4u + 0x24u * n : eax);
     return 1;
 }

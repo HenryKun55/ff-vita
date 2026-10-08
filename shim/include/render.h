@@ -131,6 +131,7 @@ void rq_end(void);
 #include "rq_fast.h"
 void *rq_data(size_t n);
 uint64_t rq_mark(void);
+uint32_t rq_rec_frame(void);   /* the frame being recorded (render_queue.h) */
 int rq_passed(uint64_t mark);
 void rq_sync(void);
 /* Game thread: the diagnostic mode that decodes whole index ranges is on. */

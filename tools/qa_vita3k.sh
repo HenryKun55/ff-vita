@@ -16,6 +16,7 @@
 #        SCENE   start scene (default SinglePlayer\C01A\FF-C01A_MAIN.gms)
 #        MHZ     emulated CPU clock (default 444; the timing then resembles hardware's)
 #        CFG     contents of ux0:data/ff/ff.cfg for the run (default none)
+#        INI     "Key value;..." settings for the test copy's Freedom.ini
 #        VITA3K  Vita3K binary (default the local source build)
 #        TIMEOUT seconds (default 300)
 set -u
@@ -69,6 +70,12 @@ done
 # (backslashes doubled: sed would read \C, \F... as escapes)
 SCENE_SED=$(printf '%s' "$SCENE" | sed 's/\\/\\\\/g')
 sed "s|^DefaultScene=.*|DefaultScene=$SCENE_SED|" "$ROOT/gamedata/pc/Freedom.ini" > "$QA/Freedom.ini"
+# INI="Key value;Key value": settings of the test copy's Freedom.ini (e.g. "DrawDistance 0.6").
+if [ -n "${INI:-}" ]; then
+    printf '%s' "$INI" | tr ';' '\n' | while read -r k v; do
+        [ -n "$k" ] && sed -i '' "s|^$k .*|$k $v|" "$QA/Freedom.ini"
+    done
+fi
 ln -sfn "$QA" "$DATA/pc"
 printf '%s' "$SCRIPT" > "$DATA/input.txt"
 rm -f "$DATA/shot_now.txt" "$DATA/ff.log" "$DATA/profile.txt" "$DATA/ff.cfg"

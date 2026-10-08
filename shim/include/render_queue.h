@@ -38,6 +38,8 @@ void rq_sync(void);
 /* The commands recorded so far; rq_passed(mark): all of them have been executed
  * (and memory they read may be reused). */
 uint64_t rq_mark(void);
+/* The frame being recorded: frame f - 2 has been executed when f is recorded. */
+uint32_t rq_rec_frame(void);
 int rq_passed(uint64_t mark);
 /* Drains the stream and stops the render thread (GL calls are direct afterwards). */
 void rq_shutdown(void);

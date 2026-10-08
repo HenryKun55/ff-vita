@@ -234,6 +234,8 @@ static void notify_game(void)
         sema_signal(&game_sema);
 }
 
+uint32_t rq_rec_frame(void) { return rec_frame; }
+
 uint64_t rq_mark(void)
 {
     return rq_rec_cmds;

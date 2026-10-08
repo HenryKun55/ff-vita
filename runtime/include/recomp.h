@@ -80,23 +80,37 @@ static inline void WRF64(uint32_t a, double v) { memcpy(g_mem + a, &v, 8); }
 /* Accessors used by the generated code. Every generated function copies g_mem into
  * the local `gm`: a store through a uint8_t pointer may alias any object, so a
  * global base would be reloaded after every guest store. */
+#if defined(FF_WATCH)
+/* Diagnostic build (FF_WATCH, with FF_PROFILE): the generated code's stores into
+ * [rt_watch_lo, rt_watch_hi) are reported with the guest function doing them. */
+extern uint8_t *volatile rt_watch_lo, *volatile rt_watch_hi;
+void rt_watch_hit(const uint8_t *p, const void *v, unsigned n);
+#define RT_WATCH(p, v, n) \
+    do { \
+        if ((p) >= rt_watch_lo && (p) < rt_watch_hi) \
+            rt_watch_hit((p), (v), (n)); \
+    } while (0)
+#else
+#define RT_WATCH(p, v, n) ((void)0)
+#endif
 static inline uint32_t rt_ld16(const uint8_t *p) { uint16_t v; memcpy(&v, p, 2); return v; }
 static inline uint32_t rt_ld32(const uint8_t *p) { uint32_t v; memcpy(&v, p, 4); return v; }
 static inline uint64_t rt_ld64(const uint8_t *p) { uint64_t v; memcpy(&v, p, 8); return v; }
-static inline void rt_st16(uint8_t *p, uint32_t v) { uint16_t t = (uint16_t)v; memcpy(p, &t, 2); }
-static inline void rt_st32(uint8_t *p, uint32_t v) { memcpy(p, &v, 4); }
-static inline void rt_st64(uint8_t *p, uint64_t v) { memcpy(p, &v, 8); }
+static inline void rt_st16(uint8_t *p, uint32_t v) { uint16_t t = (uint16_t)v; RT_WATCH(p, &t, 2); memcpy(p, &t, 2); }
+static inline void rt_st32(uint8_t *p, uint32_t v) { RT_WATCH(p, &v, 4); memcpy(p, &v, 4); }
+static inline void rt_st64(uint8_t *p, uint64_t v) { RT_WATCH(p, &v, 8); memcpy(p, &v, 8); }
 static inline double rt_ldf32(const uint8_t *p) { float v; memcpy(&v, p, 4); return (double)v; }
 static inline double rt_ldf64(const uint8_t *p) { double v; memcpy(&v, p, 8); return v; }
-static inline void rt_stf32(uint8_t *p, double v) { float t = (float)v; memcpy(p, &t, 4); }
-static inline void rt_stf64(uint8_t *p, double v) { memcpy(p, &v, 8); }
+static inline void rt_stf32(uint8_t *p, double v) { float t = (float)v; RT_WATCH(p, &t, 4); memcpy(p, &t, 4); }
+static inline void rt_stf64(uint8_t *p, double v) { RT_WATCH(p, &v, 8); memcpy(p, &v, 8); }
 
 /* By host pointer (the generator folds small displacements into the pointer). */
+static inline void rt_st8(uint8_t *p, uint32_t v) { uint8_t t = (uint8_t)v; RT_WATCH(p, &t, 1); *p = t; }
 #define PRD8(p) ((uint32_t)*(p))
 #define PRD16(p) rt_ld16(p)
 #define PRD32(p) rt_ld32(p)
 #define PRD64(p) rt_ld64(p)
-#define PWR8(p, v) (*(p) = (uint8_t)(v))
+#define PWR8(p, v) rt_st8((p), (v))
 #define PWR16(p, v) rt_st16((p), (v))
 #define PWR32(p, v) rt_st32((p), (v))
 #define PWR64(p, v) rt_st64((p), (v))

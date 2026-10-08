@@ -102,6 +102,12 @@ option(FF_PROFILE "Build with the sampling profiler" OFF)
 if(FF_PROFILE)
     target_compile_definitions(ff_recomp PUBLIC FF_PROFILE)
     target_compile_definitions(ff PRIVATE FF_PROFILE)
+    # Store watch (runtime/include/recomp.h RT_WATCH): who writes a watched range.
+    option(FF_WATCH "Report the guest functions storing into a watched range" OFF)
+    if(FF_WATCH)
+        target_compile_definitions(ff_recomp PUBLIC FF_WATCH)
+        target_compile_definitions(ff PRIVATE FF_WATCH)
+    endif()
 endif()
 
 if(VITA)

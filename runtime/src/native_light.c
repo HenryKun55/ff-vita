@@ -19,6 +19,7 @@
  * no caller reads), returns with eax 0 and pops its 5 arguments. */
 #include "recomp.h"
 #include "runtime.h"
+#include "nstat.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -41,99 +42,146 @@ static inline float ldf(uint32_t a)
 
 static inline void stf(uint32_t a, float v) { memcpy(g_mem + a, &v, 4); }
 
-/* acc[i] += factor[i] * color * k, per channel, as the guest rounds it. */
-static inline void accumulate(uint32_t i, uint32_t col, float k)
+static inline float lf(const uint8_t *p)
 {
-    for (uint32_t ch = 0; ch < 3u; ch++) {
-        uint32_t a = ACC + 16u * i + 4u * ch;
-        float f = ldf(FACTOR + 16u * i + 4u * ch) * ldf(col + 4u * ch);
-        stf(a, f * k + ldf(a));
-    }
+    float v;
+    memcpy(&v, p, 4);
+    return v;
 }
 
-/* Type 1: point light with linear falloff beyond an inner radius. */
-static void light_point(uint32_t v, uint32_t nv, uint32_t l)
+/* The light's constants, read once per call (the loops below write only the
+ * accumulators, which never overlap a light, a vertex or a factor). */
+typedef struct LightK {
+    float px, py, pz;      /* -0x38 position */
+    float m[9];            /* -0x2C direction (3) or matrix (9) */
+    float col[3];          /* -0x08 colour */
+    float col2[3];         /* +0x04 second colour */
+    float r20, r24, r28, r2c, r30, c34, c38, c40, s44, s48, e4c, e50;
+} LightK;
+
+static void light_load(LightK *k, uint32_t l)
 {
-    const float px = ldf(l - 0x38u), py = ldf(l - 0x34u), pz = ldf(l - 0x30u);
-    for (uint32_t i = 0; i < nv; i++, v += 0x24u) {
-        float dx = ldf(v) - px, dy = ldf(v + 4u) - py, dz = ldf(v + 8u) - pz;
-        float nd = dz * ldf(v + 0x14u) + dx * ldf(v + 0x0Cu) + dy * ldf(v + 0x10u);
+    const uint8_t *p = g_mem + l;
+    k->px = lf(p - 0x38);
+    k->py = lf(p - 0x34);
+    k->pz = lf(p - 0x30);
+    for (int j = 0; j < 9; j++)
+        k->m[j] = lf(p - 0x2C + 4 * j);
+    for (int j = 0; j < 3; j++) {
+        k->col[j] = lf(p - 0x08 + 4 * j);
+        k->col2[j] = lf(p + 0x04 + 4 * j);
+    }
+    k->r20 = lf(p + 0x20);
+    k->r24 = lf(p + 0x24);
+    k->r28 = lf(p + 0x28);
+    k->r2c = lf(p + 0x2C);
+    k->r30 = lf(p + 0x30);
+    k->c34 = lf(p + 0x34);
+    k->c38 = lf(p + 0x38);
+    k->c40 = lf(p + 0x40);
+    k->s44 = lf(p + 0x44);
+    k->s48 = lf(p + 0x48);
+    k->e4c = lf(p + 0x4C);
+    k->e50 = lf(p + 0x50);
+}
+
+/* acc += factor * color * k, per channel, as the guest rounds it. */
+static inline void accumulate(float *acc, const float *factor, const float *col, float k)
+{
+    for (int ch = 0; ch < 3; ch++)
+        acc[ch] = (factor[ch] * col[ch]) * k + acc[ch];
+}
+
+static inline float *acc_of(uint32_t i) { return (float *)(void *)(g_mem + ACC + 16u * i); }
+static inline const float *factor_of(uint32_t i) { return (const float *)(const void *)(g_mem + FACTOR + 16u * i); }
+
+/* Type 1: point light with linear falloff beyond an inner radius. */
+static void light_point(uint32_t v, uint32_t nv, const LightK *L)
+{
+    const float px = L->px, py = L->py, pz = L->pz, r24 = L->r24, r28 = L->r28, r2c = L->r2c, r30 = L->r30;
+    const uint8_t *vp = g_mem + v;
+    for (uint32_t i = 0; i < nv; i++, vp += 0x24) {
+        const float dx = lf(vp) - px, dy = lf(vp + 4) - py, dz = lf(vp + 8) - pz;
+        const float nd = dz * lf(vp + 0x14) + dx * lf(vp + 0x0C) + dy * lf(vp + 0x10);
         if (nd >= 0.0f)
             continue;
-        float d2 = dz * dz + dy * dy + dx * dx;
-        if (d2 > ldf(l + 0x2Cu))
+        const float d2 = dz * dz + dy * dy + dx * dx;
+        if (d2 > r2c)
             continue;
-        float dist = sqrtf(d2);
-        float att = d2 < ldf(l + 0x24u) ? 1.0f : (ldf(l + 0x28u) - dist) * ldf(l + 0x30u);
-        float k = -(nd / dist * att);
-        accumulate(i, l - 8u, k);
+        const float dist = sqrtf(d2);
+        const float att = d2 < r24 ? 1.0f : (r28 - dist) * r30;
+        accumulate(acc_of(i), factor_of(i), L->col, -(nd / dist * att));
     }
 }
 
 /* Type 0: spot light (point falloff, then a smooth cone). */
-static void light_spot(uint32_t v, uint32_t nv, uint32_t l)
+static void light_spot(uint32_t v, uint32_t nv, const LightK *L)
 {
-    const float px = ldf(l - 0x38u), py = ldf(l - 0x34u), pz = ldf(l - 0x30u);
-    for (uint32_t i = 0; i < nv; i++, v += 0x24u) {
-        float dx = ldf(v) - px, dy = ldf(v + 4u) - py, dz = ldf(v + 8u) - pz;
-        float nd = dz * ldf(v + 0x14u) + dx * ldf(v + 0x0Cu) + dy * ldf(v + 0x10u);
+    const float px = L->px, py = L->py, pz = L->pz, r20 = L->r20, r28 = L->r28, r2c = L->r2c, r30 = L->r30;
+    const float ax = L->m[0], ay = L->m[1], az = L->m[2], c34 = L->c34, c38 = L->c38, c40 = L->c40;
+    const uint8_t *vp = g_mem + v;
+    for (uint32_t i = 0; i < nv; i++, vp += 0x24) {
+        float dx = lf(vp) - px, dy = lf(vp + 4) - py, dz = lf(vp + 8) - pz;
+        const float nd = dz * lf(vp + 0x14) + dx * lf(vp + 0x0C) + dy * lf(vp + 0x10);
         if (nd >= 0.0f)
             continue;
-        float d2 = dz * dz + dy * dy + dx * dx;
-        if (d2 >= ldf(l + 0x2Cu))   /* (unordered goes on, as in the guest) */
+        const float d2 = dz * dz + dy * dy + dx * dx;
+        if (d2 >= r2c)   /* (unordered goes on, as in the guest) */
             continue;
-        float dist = sqrtf(d2);
-        float att = !(dist > ldf(l + 0x20u)) ? 1.0f : (ldf(l + 0x28u) - dist) * ldf(l + 0x30u);
-        float inv = 1.0f / dist;
+        const float dist = sqrtf(d2);
+        const float att = !(dist > r20) ? 1.0f : (r28 - dist) * r30;
+        const float inv = 1.0f / dist;
         dx *= inv;
         dy *= inv;
         dz *= inv;
-        float sd = dz * ldf(l - 0x24u) + dy * ldf(l - 0x28u) + dx * ldf(l - 0x2Cu);
-        if (sd < ldf(l + 0x34u))
+        const float sd = dz * az + dy * ay + dx * ax;
+        if (sd < c34)
             continue;
         float k = -(att * inv * nd);
-        if (sd < ldf(l + 0x38u)) {
-            float t = (sd - ldf(l + 0x34u)) * ldf(l + 0x40u);
+        if (sd < c38) {
+            const float t = (sd - c34) * c40;
             k *= (3.0f - (t + t)) * t * t;
         }
-        accumulate(i, l - 8u, k);
+        accumulate(acc_of(i), factor_of(i), L->col, k);
     }
 }
 
 /* Type 2: projected light (a rectangular window with soft edges). */
-static void light_projected(uint32_t v, uint32_t nv, uint32_t l, uint32_t esp)
+static void light_projected(uint32_t v, uint32_t nv, const LightK *L, uint32_t esp)
 {
-    const float px = ldf(l - 0x38u), py = ldf(l - 0x34u), pz = ldf(l - 0x30u);
-    const uint32_t m = l - 0x2Cu;
+    const float px = L->px, py = L->py, pz = L->pz, r20 = L->r20, r28 = L->r28, r30 = L->r30;
+    const float s44 = L->s44, s48 = L->s48, e4c = L->e4c, e50 = L->e50;
+    const float *m = L->m;
+    const uint8_t *vp = g_mem + v;
     /* The edge factor lives in the guest frame ([esp+0x10]): an iteration that
      * leaves it unset uses the previous one's. */
     float edge = ldf(esp - 0x5Cu + 0x10u);
-    for (uint32_t i = 0; i < nv; i++, v += 0x24u) {
-        float dx = ldf(v) - px, dy = ldf(v + 4u) - py, dz = ldf(v + 8u) - pz;
-        float nd = -(dz * ldf(v + 0x14u) + dx * ldf(v + 0x0Cu) + dy * ldf(v + 0x10u));
+    for (uint32_t i = 0; i < nv; i++, vp += 0x24) {
+        const float dx = lf(vp) - px, dy = lf(vp + 4) - py, dz = lf(vp + 8) - pz;
+        const float nd = -(dz * lf(vp + 0x14) + dx * lf(vp + 0x0C) + dy * lf(vp + 0x10));
         if (nd <= 0.0f)
             continue;
-        float x = dx * ldf(m + 0x18u) + dy * ldf(m + 0x1Cu) + dz * ldf(m + 0x20u);
-        float y = dx * ldf(m + 0x0Cu) + dy * ldf(m + 0x10u) + dz * ldf(m + 0x14u);
-        float z = dx * ldf(m) + dy * ldf(m + 4u) + dz * ldf(m + 8u);
+        const float z = dx * m[0] + dy * m[1] + dz * m[2];
         if (z <= 0.0f)
             continue;
-        float dist = sqrtf(z * z + y * y + x * x);
-        if (dist > ldf(l + 0x28u))
+        const float x = dx * m[6] + dy * m[7] + dz * m[8];
+        const float y = dx * m[3] + dy * m[4] + dz * m[5];
+        const float dist = sqrtf(z * z + y * y + x * x);
+        if (dist > r28)
             continue;
-        float att = !(dist > ldf(l + 0x20u)) ? 1.0f : (ldf(l + 0x28u) - dist) * ldf(l + 0x30u);
-        float a = nd / dist * att;
-        float iz = 1.0f / z;
-        float sx = fabsf(x * ldf(l + 0x44u) * iz), sy = fabsf(y * ldf(l + 0x48u) * iz);
+        const float att = !(dist > r20) ? 1.0f : (r28 - dist) * r30;
+        const float a = nd / dist * att;
+        const float iz = 1.0f / z;
+        float sx = fabsf(x * s44 * iz), sy = fabsf(y * s48 * iz);
         if (sx > 1.0f || sy > 1.0f)
             continue;
         unsigned w = 0;
-        if (sx > ldf(l + 0x4Cu)) {
-            sx = (sx - ldf(l + 0x4Cu)) * ldf(l + 0x50u);
+        if (sx > e4c) {
+            sx = (sx - e4c) * e50;
             w = 1;
         }
-        if (sy > ldf(l + 0x4Cu)) {
-            sy = (sy - ldf(l + 0x4Cu)) * ldf(l + 0x50u);
+        if (sy > e4c) {
+            sy = (sy - e4c) * e50;
             w |= 2;
         }
         switch (w) {
@@ -142,37 +190,40 @@ static void light_projected(uint32_t v, uint32_t nv, uint32_t l, uint32_t esp)
         case 2: edge = 1.0f - sy; break;
         default: edge = (1.0f - sy) * (1.0f - sx); break;
         }
-        float k = (3.0f - (edge + edge)) * edge * edge * a;
-        accumulate(i, l - 8u, k);
+        accumulate(acc_of(i), factor_of(i), L->col, (3.0f - (edge + edge)) * edge * edge * a);
     }
     stf(esp - 0x5Cu + 0x10u, edge);
 }
 
 /* Type 3: ambient (flags 0x2000: color only; 0x1000000: times the factors) or
  * hemispheric: color + second color * (1 - n.dir) / 2, times the factors. */
-static void light_ambient(uint32_t v, uint32_t nv, uint32_t l, uint32_t flags)
+static void light_ambient(uint32_t v, uint32_t nv, const LightK *L, uint32_t flags)
 {
+    const float c0 = L->col[0], c1 = L->col[1], c2 = L->col[2];
     if (flags & 0x2000u) {
-        for (uint32_t i = 0; i < nv; i++)
-            for (uint32_t ch = 0; ch < 3u; ch++) {
-                uint32_t a = ACC + 16u * i + 4u * ch;
-                stf(a, ldf(a) + ldf(l - 8u + 4u * ch));
-            }
+        for (uint32_t i = 0; i < nv; i++) {
+            float *acc = acc_of(i);
+            acc[0] = acc[0] + c0;
+            acc[1] = acc[1] + c1;
+            acc[2] = acc[2] + c2;
+        }
         return;
     }
     if (flags & 0x1000000u) {
         for (uint32_t i = 0; i < nv; i++)
-            accumulate(i, l - 8u, 1.0f);
+            accumulate(acc_of(i), factor_of(i), L->col, 1.0f);
         return;
     }
-    for (uint32_t i = 0; i < nv; i++, v += 0x24u) {
-        float s = ((1.0f - ldf(v + 0x14u) * ldf(l - 0x24u)) - ldf(l - 0x28u) * ldf(v + 0x10u) -
-                   ldf(v + 0x0Cu) * ldf(l - 0x2Cu)) * 0.5f;
-        for (uint32_t ch = 0; ch < 3u; ch++) {
-            float c = ldf(l + 4u + 4u * ch) * s + ldf(l - 8u + 4u * ch);
-            uint32_t a = ACC + 16u * i + 4u * ch;
-            stf(a, c * ldf(FACTOR + 16u * i + 4u * ch) + ldf(a));
-        }
+    const float ax = L->m[0], ay = L->m[1], az = L->m[2];
+    const float h0 = L->col2[0], h1 = L->col2[1], h2 = L->col2[2];
+    const uint8_t *vp = g_mem + v;
+    for (uint32_t i = 0; i < nv; i++, vp += 0x24) {
+        const float s = ((1.0f - lf(vp + 0x14) * az) - ay * lf(vp + 0x10) - lf(vp + 0x0C) * ax) * 0.5f;
+        float *acc = acc_of(i);
+        const float *f = factor_of(i);
+        acc[0] = (h0 * s + c0) * f[0] + acc[0];
+        acc[1] = (h1 * s + c1) * f[1] + acc[1];
+        acc[2] = (h2 * s + c2) * f[2] + acc[2];
     }
 }
 
@@ -189,25 +240,28 @@ static int light_vertices(Ctx *c, uint32_t esp)
     for (uint32_t k = 0; k < nl; k++) {
         const uint32_t l = lights + 0x1E0u + 0x240u * k;
         const uint32_t type = RD32(l - 0x40u);
+        LightK L;
         if (type > 3u)
             continue;
 #if !defined(__vita__)
         type_calls[type]++;
 #endif
         if (type == 3u) {
-            light_ambient(verts, nv, l, flags);
+            light_load(&L, l);
+            light_ambient(verts, nv, &L, flags);
             continue;
         }
         if ((flags & 0x2000u) && !(RD8(l - 0x3Cu) & 1u))
             continue;
         if (!nv)
             continue;
+        light_load(&L, l);
         if (type == 0u)
-            light_spot(verts, nv, l);
+            light_spot(verts, nv, &L);
         else if (type == 1u)
-            light_point(verts, nv, l);
+            light_point(verts, nv, &L);
         else
-            light_projected(verts, nv, l, esp);
+            light_projected(verts, nv, &L, esp);
     }
     return 1;
 }
@@ -283,7 +337,13 @@ int rt_native_light_vertices(Ctx *c, uint32_t esp, uint32_t ecx, uint32_t eax, u
 #endif
     (void)ecx;
     (void)eax;
+    NSTAT_BEGIN();
     light_vertices(c, esp);
+    if (g_nstat) {
+        const uint32_t nv = RD32(esp + 8u), nl = RD32(esp + 16u);
+        NSTAT_END(NS_LIGHT, (uint64_t)nv * nl);
+        nstat_seen(NS_LIGHT, RD32(esp + 4u), nv, RD32(esp + 12u) ^ (nl << 24) ^ RD32(esp + 20u));
+    }
     *ret = ((uint64_t)(esp + 4u + 0x14u) << 32) | 0u;
     return 1;
 }

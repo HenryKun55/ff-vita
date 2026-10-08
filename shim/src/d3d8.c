@@ -9,10 +9,25 @@
 #include "ddraw_priv.h"
 #include "platform.h"
 #include "render.h"
+#include "nstat.h"
 
 #include <stdatomic.h>
 #include <stdio.h>
+#if defined(__vita__)
+#include <psp2/kernel/clib.h>
+#endif
 #include <stdlib.h>
+
+/* Bulk copies of vertex data (often not 16-byte aligned: 36-byte vertices) with
+ * the system's copy, which handles any alignment at full speed. */
+static inline void copy_bulk(void *dst, const void *src, size_t n)
+{
+#if defined(__vita__)
+    sceClibMemcpy(dst, src, n);
+#else
+    memcpy(dst, src, n);
+#endif
+}
 
 #define D3D_OK 0u
 #define D3DERR_NOTAVAILABLE 0x8876086Au
@@ -603,7 +618,7 @@ static void pk_exec(const void *p)
 static void pk_record(uint32_t prim, uint32_t va, uint32_t stride, uint32_t nv, const uint16_t *idx, uint32_t ni)
 {
     uint8_t *v = rq_data((size_t)nv * stride);
-    memcpy(v, g_mem + va, (size_t)nv * stride);
+    copy_bulk(v, g_mem + va, (size_t)nv * stride);
     uint16_t *ic = NULL;
     if (idx && ni) {
         ic = rq_data((size_t)ni * sizeof(uint16_t));
@@ -790,6 +805,199 @@ static void pk_exec_buf(const void *p)
                 d.has_spec, d.ntex);
 }
 
+/* Mirrors of the buffers drawn with copies (copy_draws: the lit-vertex buffer,
+ * rewritten with a plain Lock every frame while recorded draws read it). Its
+ * draws read one of two host copies, by the parity of the frame recorded, instead
+ * of copying their vertices: frame f's copy was last read by frame f - 2, which
+ * the render thread has executed. A copy is brought up to date with the ranges
+ * written since it was (all the writes to these buffers are native code's, which
+ * reports them: d3d_mem_written; checked with stats=1 on FF_WATCH builds) before
+ * a draw reads it. A range drawn earlier in the same frame and written again
+ * cannot be updated under that draw: the frame's later draws copy their
+ * vertices as before (and the copy is updated in the next frame).
+ * ff.cfg vb_mirror=0: always copy. */
+#define MIRRORS 4
+#define MIRROR_PEND 1024
+#define MIRROR_GRAIN 12u   /* stamp granularity: a common divisor of the vertex sizes (36) */
+typedef struct Mirror {
+    Buffer8 *b;
+    uint32_t mem, size;
+    uint8_t *m[2];
+    uint32_t pend[2][MIRROR_PEND][2];   /* (offset, bytes) written since copy i was updated */
+    uint32_t npend[2];
+    int full[2];                        /* too many ranges: copy all */
+    uint8_t *drawn;                     /* per grain: stamp of the frame that drew it from this frame's copy */
+    uint32_t frame;                     /* frame of the stamps */
+    uint8_t stamp;
+    int conflict;                       /* this frame: draws copy their vertices */
+} Mirror;
+static Mirror *mirrors[MIRRORS];
+static uint32_t mirror_lo = 0xFFFFFFFFu, mirror_hi;   /* guest range of all mirrored buffers */
+static int mirror_on = -1;
+static uint64_t st_mirror_bytes, st_mirror_draws, st_mirror_conflicts;
+
+static void mirror_bounds(void)
+{
+    mirror_lo = 0xFFFFFFFFu;
+    mirror_hi = 0;
+    for (int i = 0; i < MIRRORS; i++)
+        if (mirrors[i]) {
+            if (mirrors[i]->mem < mirror_lo)
+                mirror_lo = mirrors[i]->mem;
+            if (mirrors[i]->mem + mirrors[i]->size > mirror_hi)
+                mirror_hi = mirrors[i]->mem + mirrors[i]->size;
+        }
+}
+
+static void mirror_drop(Buffer8 *b)
+{
+    for (int i = 0; i < MIRRORS; i++)
+        if (mirrors[i] && mirrors[i]->b == b) {
+            rq_sync();   /* recorded draws may read it */
+            free(mirrors[i]->m[0]);
+            free(mirrors[i]->m[1]);
+            free(mirrors[i]->drawn);
+            free(mirrors[i]);
+            mirrors[i] = NULL;
+            mirror_bounds();
+        }
+}
+
+static void mirror_add(Buffer8 *b)
+{
+    if (mirror_on < 0) {
+        mirror_on = 1;
+#if defined(__vita__)
+        FILE *f = fopen("ux0:data/ff/ff.cfg", "r");
+        if (f) {
+            char line[128];
+            while (fgets(line, sizeof(line), f))
+                if (!strncmp(line, "vb_mirror=0", 11))
+                    mirror_on = 0;
+            fclose(f);
+        }
+#else
+        const char *e = getenv("FF_VB_MIRROR");
+        mirror_on = !(e && e[0] == '0');
+#endif
+    }
+    if (!mirror_on || b->size % MIRROR_GRAIN)
+        return;
+    int k = 0;
+    while (k < MIRRORS && mirrors[k])
+        k++;
+    if (k == MIRRORS)
+        return;
+    Mirror *m = calloc(1, sizeof(Mirror));
+    if (!m)
+        return;
+    m->m[0] = malloc(b->size);
+    m->m[1] = malloc(b->size);
+    m->drawn = calloc(b->size / MIRROR_GRAIN, 1);
+    if (!m->m[0] || !m->m[1] || !m->drawn) {
+        free(m->m[0]);
+        free(m->m[1]);
+        free(m->drawn);
+        free(m);
+        return;
+    }
+    m->b = b;
+    m->mem = b->mem;
+    m->size = b->size;
+    m->full[0] = m->full[1] = 1;
+    m->frame = 0xFFFFFFFFu;
+    mirrors[k] = m;
+    mirror_bounds();
+    rt_log("d3d8: vertex buffer %08X (%u KiB) mirrored for the render thread", b->mem, b->size / 1024u);
+}
+
+void d3d_mem_written(uint32_t addr, uint32_t len)
+{
+    if (addr >= mirror_hi || addr + len <= mirror_lo || !len)
+        return;
+    for (int i = 0; i < MIRRORS; i++) {
+        Mirror *m = mirrors[i];
+        if (!m || addr >= m->mem + m->size || addr + len <= m->mem)
+            continue;
+        uint32_t lo = addr < m->mem ? 0 : addr - m->mem, hi = addr + len - m->mem;
+        if (hi > m->size)
+            hi = m->size;
+        for (int p = 0; p < 2; p++) {
+            if (m->full[p])
+                continue;
+            uint32_t n = m->npend[p];
+            if (n && m->pend[p][n - 1][0] + m->pend[p][n - 1][1] == lo) {   /* (contiguous writes) */
+                m->pend[p][n - 1][1] += hi - lo;
+            } else if (n < MIRROR_PEND) {
+                m->pend[p][n][0] = lo;
+                m->pend[p][n][1] = hi - lo;
+                m->npend[p] = n + 1;
+            } else {
+                m->full[p] = 1;
+            }
+        }
+    }
+}
+
+static Mirror *mirror_of(const Buffer8 *b)
+{
+    for (int i = 0; i < MIRRORS; i++)
+        if (mirrors[i] && mirrors[i]->b == b)
+            return mirrors[i]->mem == b->mem && mirrors[i]->size == b->size ? mirrors[i] : NULL;
+    return NULL;
+}
+
+/* Whether [off, off + n) was drawn from this frame's copy. */
+static int mirror_drawn(const Mirror *m, uint32_t off, uint32_t n)
+{
+    for (uint32_t g = off / MIRROR_GRAIN, e = (off + n + MIRROR_GRAIN - 1u) / MIRROR_GRAIN; g < e; g++)
+        if (m->drawn[g] == m->stamp)
+            return 1;
+    return 0;
+}
+
+/* This frame's copy of m with [voff, voff + bytes) up to date, or NULL: copy the vertices. */
+static const uint8_t *mirror_read(Mirror *m, uint32_t voff, uint32_t bytes)
+{
+    const uint32_t f = rq_rec_frame(), p = f & 1u;
+    if (m->frame != f) {
+        m->frame = f;
+        m->stamp = (uint8_t)(m->stamp % 255u + 1u);
+        m->conflict = 0;
+    }
+    if (m->conflict)
+        return NULL;
+    if (m->full[p]) {
+        if (mirror_drawn(m, 0, m->size)) {
+            m->conflict = 1;
+            st_mirror_conflicts++;
+            return NULL;
+        }
+        copy_bulk(m->m[p], g_mem + m->mem, m->size);
+        st_mirror_bytes += m->size;
+        m->full[p] = 0;
+        m->npend[p] = 0;
+    }
+    for (uint32_t i = 0; i < m->npend[p]; i++) {
+        const uint32_t o = m->pend[p][i][0], n = m->pend[p][i][1];
+        if (mirror_drawn(m, o, n)) {
+            /* Keep the ranges not applied yet for the next frame. */
+            memmove(m->pend[p], m->pend[p] + i, (m->npend[p] - i) * sizeof(m->pend[p][0]));
+            m->npend[p] -= i;
+            m->conflict = 1;
+            st_mirror_conflicts++;
+            return NULL;
+        }
+        copy_bulk(m->m[p] + o, g_mem + m->mem + o, n);
+        st_mirror_bytes += n;
+    }
+    m->npend[p] = 0;
+    memset(m->drawn + voff / MIRROR_GRAIN, m->stamp,
+           (voff + bytes + MIRROR_GRAIN - 1u) / MIRROR_GRAIN - voff / MIRROR_GRAIN);
+    st_mirror_draws++;
+    return m->m[p] + voff;
+}
+
 /* Records a draw of vertex buffer vb (byte offset voff) with index buffer ib
  * (start index, NULL: not indexed), read in place by the render thread; 0 when
  * the general path must be taken. */
@@ -813,10 +1021,14 @@ static int pk_record_buffers(uint32_t prim, Buffer8 *vb, uint32_t voff, uint32_t
         PROF_SECTION_END;
     }
     PROF_SECTION(PROF_H_BATCH);
+    NSTAT_BEGIN();
     /* Buffers rewritten with plain Locks: only the vertices this draw reads, copied
      * into the frame's memory (before the command is opened). */
-    uint8_t *vcopy = NULL;
-    if (vb->copy_draws) {
+    const uint8_t *vcopy = NULL;
+    Mirror *mr = vb->copy_draws ? mirror_of(vb) : NULL;
+    if (mr)
+        vcopy = mirror_read(mr, voff, nv * stride);
+    if (vb->copy_draws && !vcopy) {
         /* The same range drawn again in this frame (more passes over a mesh) shares
          * the copy: the frame's memory lives until the frame has been executed. */
         static struct {
@@ -832,14 +1044,17 @@ static int pk_record_buffers(uint32_t prim, Buffer8 *vb, uint32_t voff, uint32_t
             st_draw_copy_shared += bytes;
         } else {
             st_draw_copy_bytes += bytes;
-            vcopy = rq_data(bytes);
-            memcpy(vcopy, g_mem + vb->mem + voff, bytes);
+            NSTAT_BEGIN();
+            uint8_t *nc = rq_data(bytes);
+            copy_bulk(nc, g_mem + vb->mem + voff, bytes);
+            vcopy = nc;
+            NSTAT_END(NS_RECORD_COPY, bytes);
             seen[h].b = vb;
             seen[h].gen = vb->gen;
             seen[h].voff = voff;
             seen[h].bytes = bytes;
             seen[h].frame = g_frame_serial;
-            seen[h].copy = vcopy;
+            seen[h].copy = nc;
         }
     }
     PkBufDraw *c = rq_begin_fast(pk_exec_buf, sizeof(PkBufDraw));
@@ -869,6 +1084,7 @@ static int pk_record_buffers(uint32_t prim, Buffer8 *vb, uint32_t voff, uint32_t
     if (ib)
         ib->last_mark = mark;
     st_inplace++;
+    NSTAT_END(NS_RECORD, 1u);
     PROF_SECTION_END;
     return 1;
 }
@@ -961,11 +1177,16 @@ static void dev_Present(Ctx *c)
                st_other, st_renames, (unsigned)(st_rename_bytes / 1024u), st_rename_max / 1024u, st_locks[0],
                st_locks[1], st_locks[2], (unsigned)(st_draw_copy_bytes / 1024u),
                (unsigned)(st_draw_copy_shared / 1024u));
+        rt_log("d3d8 mirrored buffers (600 frames): %llu draws read them, %llu KiB brought up to date, %llu "
+               "frames copying after a conflict", (unsigned long long)st_mirror_draws,
+               (unsigned long long)(st_mirror_bytes / 1024u), (unsigned long long)st_mirror_conflicts);
+        st_mirror_draws = st_mirror_bytes = st_mirror_conflicts = 0;
         st_draw_copy_bytes = st_draw_copy_shared = 0;
         st_inplace = st_other = st_renames = 0;
         st_rename_bytes = 0;
         st_rename_max = st_locks[0] = st_locks[1] = st_locks[2] = 0;
     }
+    nstat_frame();
     retired_collect();
     back_buffer();
     render_present();
@@ -2323,6 +2544,7 @@ static void buf_Release(Ctx *c)
             dev.stream_vb = 0;
         if (dev.ib == o)
             dev.ib = 0;
+        mirror_drop(b);
         retire(b->mem, b->last_mark);
         free(b);
     }
@@ -2336,6 +2558,70 @@ static void ib_GetType(Ctx *c) { stdcall_ret(c, RT_INDEXBUFFER, 1); }
 /* Lock(offset, size, &data, flags): D3DLOCK_DISCARD 0x2000, NOOVERWRITE 0x1000,
  * READONLY 0x10. A writing Lock (but NOOVERWRITE, whose writes avoid the data in
  * use) of a buffer recorded draws may still read renames it. */
+/* stats=1: what the game changes in a buffer drawn with copies (copy_draws)
+ * between two Locks, against what the native code logged writing
+ * (nstat_written): words changed, of which explained by those writes, and
+ * words written but unchanged. */
+static void verify_copy_buffer(const Buffer8 *b)
+{
+    static struct {
+        const Buffer8 *b;
+        uint32_t mem, size, log_at;
+        uint8_t *snap;
+    } snaps[8];
+    int k = 0;
+    while (k < 8 && snaps[k].b && snaps[k].b != b)
+        k++;
+    if (k == 8)
+        return;
+    if (snaps[k].b == b && snaps[k].mem == b->mem && snaps[k].size == b->size) {
+        const uint32_t words = b->size / 4u;
+        uint8_t *cov = calloc(words, 1);
+        uint32_t from = snaps[k].log_at, to = nstat_wlog_n, logged = 0;
+        if (to - from > NSTAT_WLOG)
+            from = to - NSTAT_WLOG;
+        for (uint32_t i = from; i != to; i++) {
+            const uint32_t a = nstat_wlog[i % NSTAT_WLOG][0], n = nstat_wlog[i % NSTAT_WLOG][1];
+            if (a + n <= b->mem || a >= b->mem + b->size)
+                continue;
+            logged++;
+            uint32_t lo = a < b->mem ? 0 : (a - b->mem) / 4u, hi = (a + n - b->mem) / 4u;
+            if (hi > words)
+                hi = words;
+            memset(cov + lo, 1, hi - lo);
+        }
+        uint32_t changed = 0, explained = 0, rewritten_same = 0, first_unexplained = 0xFFFFFFFFu;
+        const uint32_t *now = (const uint32_t *)(const void *)(g_mem + b->mem);
+        const uint32_t *old = (const uint32_t *)(const void *)snaps[k].snap;
+        for (uint32_t w = 0; w < words; w++) {
+            if (now[w] != old[w]) {
+                changed++;
+                if (cov[w])
+                    explained++;
+                else if (first_unexplained == 0xFFFFFFFFu)
+                    first_unexplained = w * 4u;
+            } else if (cov[w]) {
+                rewritten_same++;
+            }
+        }
+        static uint32_t reports;
+        if (reports++ % 60u == 0u)
+            rt_log("verify buffer %08X (%u KiB): %u words changed since the last Lock, %u by logged native "
+                   "writes (%u ranges), %u unexplained (first at +%u); %u written words unchanged",
+                   b->mem, b->size / 1024u, changed, explained, logged, changed - explained,
+                   first_unexplained == 0xFFFFFFFFu ? 0u : first_unexplained, rewritten_same);
+        free(cov);
+    } else {
+        free(snaps[k].snap);
+        snaps[k].snap = malloc(b->size);
+        snaps[k].b = b;
+        snaps[k].mem = b->mem;
+        snaps[k].size = b->size;
+    }
+    memcpy(snaps[k].snap, g_mem + b->mem, b->size);
+    snaps[k].log_at = nstat_wlog_n;
+}
+
 static void buf_Lock(Ctx *c)
 {
     Buffer8 *b = com_host(THIS);
@@ -2344,6 +2630,10 @@ static void buf_Lock(Ctx *c)
         return;
     }
     uint32_t fl = ARG(4);
+    if (g_nstat && b->copy_draws && !(fl & 0x10u)) {
+        verify_copy_buffer(b);
+        nstat_watch(g_mem + b->mem, g_mem + b->mem + b->size);
+    }
     if (!(fl & 0x10u))   /* not READONLY */
         b->gen++;
     st_locks[(fl & 0x2000u) ? 1 : (fl & 0x1000u) ? 2 : 0]++;
@@ -2351,7 +2641,7 @@ static void buf_Lock(Ctx *c)
         uint32_t nm = heap_alloc(b->size ? b->size : 4u);
         if (nm) {
             if (!(fl & 0x2000u)) {   /* a plain Lock keeps the contents */
-                memcpy(g_mem + nm, g_mem + b->mem, b->size);
+                copy_bulk(g_mem + nm, g_mem + b->mem, b->size);
                 st_rename_bytes += b->size;
                 /* A vertex buffer the game rewrites with plain Locks while recorded draws
                  * still read it (the lit-vertex buffer: 4.5 MiB, whole-buffer Lock every
@@ -2366,6 +2656,10 @@ static void buf_Lock(Ctx *c)
             b->mem = nm;
             b->last_mark = 0;
             st_renames++;
+            if (b->copy_draws && !mirror_of(b)) {
+                mirror_drop(b);   /* (one of an older block) */
+                mirror_add(b);
+            }
         } else {
             rq_sync();   /* no memory for a new block: wait for the render thread */
         }
