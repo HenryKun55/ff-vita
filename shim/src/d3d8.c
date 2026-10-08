@@ -49,6 +49,7 @@ typedef struct Buffer8 {
     int index;               /* index buffer */
     uint64_t last_mark;      /* render queue mark after the last draw recorded with it */
     uint32_t gen;            /* counts writable Locks (cached vertex bounds go stale) */
+    int copy_draws;          /* draws copy their vertices when recorded (see buf_Lock) */
 } Buffer8;
 
 static uint32_t d3d_vtbl, dev_vtbl, tex_vtbl, surf_vtbl, vb_vtbl, ib_vtbl;
@@ -665,6 +666,8 @@ static void retire(uint32_t mem, uint64_t mark)
 /* Draw path counts, logged every 600 frames (pack thread): draws read in place,
  * fallbacks; renames of buffers in use. */
 static uint32_t st_inplace, st_other, st_renames;
+static uint64_t st_rename_bytes;
+static uint32_t st_rename_max, st_locks[3];   /* plain, DISCARD, NOOVERWRITE */
 
 /* A recorded draw of buffer memory: vertices at verts, indices (or none) at
  * idx_src, rebased by -min on the render thread. */
@@ -809,6 +812,13 @@ static int pk_record_buffers(uint32_t prim, Buffer8 *vb, uint32_t voff, uint32_t
         PROF_SECTION_END;
     }
     PROF_SECTION(PROF_H_BATCH);
+    /* Buffers rewritten with plain Locks: only the vertices this draw reads, copied
+     * into the frame's memory (before the command is opened). */
+    uint8_t *vcopy = NULL;
+    if (vb->copy_draws) {
+        vcopy = rq_data((size_t)nv * stride);
+        memcpy(vcopy, g_mem + vb->mem + voff, (size_t)nv * stride);
+    }
     PkBufDraw *c = rq_begin_fast(pk_exec_buf, sizeof(PkBufDraw));
     c->prim = prim;
     c->fvf = fvf;
@@ -819,14 +829,20 @@ static int pk_record_buffers(uint32_t prim, Buffer8 *vb, uint32_t voff, uint32_t
     c->wide = (uint8_t)wide;
     c->diag = (uint8_t)render_diag_mode();
     c->trace = g_trace_next_frame == 2;
-    c->verts = g_mem + vb->mem + voff;
+    if (vcopy) {
+        c->verts = vcopy;
+        c->vaddr = 0;   /* rewritten every frame: no cached bounds */
+    } else {
+        c->verts = g_mem + vb->mem + voff;
+        c->vaddr = (vb->usage & 0x200u) ? 0u : vb->mem + voff;   /* DYNAMIC: rewritten every frame, no cache */
+    }
     c->idx_src = ib ? g_mem + ib->mem + ioff : NULL;
-    c->vaddr = (vb->usage & 0x200u) ? 0u : vb->mem + voff;   /* DYNAMIC: rewritten every frame, no cache */
     c->gen = vb->gen;
     rq_end_fast();
     render_pk_recorded();
     uint64_t mark = rq_mark();
-    vb->last_mark = mark;
+    if (!vb->copy_draws)
+        vb->last_mark = mark;
     if (ib)
         ib->last_mark = mark;
     st_inplace++;
@@ -917,9 +933,12 @@ static void dev_Present(Ctx *c)
 {
     static uint32_t frames;
     if (++frames % 600u == 0u) {
-        rt_log("d3d8 draws (600 frames): read in place %u, other %u; buffers renamed %u", st_inplace, st_other,
-               st_renames);
+        rt_log("d3d8 draws (600 frames): read in place %u, other %u; buffers renamed %u (%u KiB copied, largest %u "
+               "KiB); locks: %u plain, %u discard, %u nooverwrite", st_inplace, st_other, st_renames,
+               (unsigned)(st_rename_bytes / 1024u), st_rename_max / 1024u, st_locks[0], st_locks[1], st_locks[2]);
         st_inplace = st_other = st_renames = 0;
+        st_rename_bytes = 0;
+        st_rename_max = st_locks[0] = st_locks[1] = st_locks[2] = 0;
     }
     retired_collect();
     back_buffer();
@@ -2301,11 +2320,22 @@ static void buf_Lock(Ctx *c)
     uint32_t fl = ARG(4);
     if (!(fl & 0x10u))   /* not READONLY */
         b->gen++;
+    st_locks[(fl & 0x2000u) ? 1 : (fl & 0x1000u) ? 2 : 0]++;
     if (g_pack_thread && !(fl & 0x1010u) && b->last_mark && !rq_passed(b->last_mark)) {
         uint32_t nm = heap_alloc(b->size ? b->size : 4u);
         if (nm) {
-            if (!(fl & 0x2000u))   /* a plain Lock keeps the contents */
+            if (!(fl & 0x2000u)) {   /* a plain Lock keeps the contents */
                 memcpy(g_mem + nm, g_mem + b->mem, b->size);
+                st_rename_bytes += b->size;
+                /* A vertex buffer the game rewrites with plain Locks while recorded draws
+                 * still read it (the lit-vertex buffer: 4.5 MiB, whole-buffer Lock every
+                 * frame): its draws copy their vertices from now on, so later Locks
+                 * neither wait nor copy the whole buffer. */
+                if (!b->index)
+                    b->copy_draws = 1;
+            }
+            if (b->size > st_rename_max)
+                st_rename_max = b->size;
             retire(b->mem, b->last_mark);
             b->mem = nm;
             b->last_mark = 0;
