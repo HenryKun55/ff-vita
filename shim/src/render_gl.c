@@ -580,7 +580,7 @@ static void pk_frame_cmd(const void *unused);
  * A D3D back buffer keeps its pixels across Present; GL's do not, and the device
  * starts every frame black. The game relies on it on its loading screens: the
  * picture is drawn once, then each frame only draws the progress bar over it,
- * without a Clear. So a frame that draws without a full colour Clear first
+ * without a Clear. So a frame that draws without any colour Clear first
  * starts with the previous frame drawn back (bk_keep_restore: on the Vita a GPU
  * blit of the front buffer; on the desktop the copy bk_keep_save made of it). */
 static int keep_valid;
@@ -698,6 +698,10 @@ void render_clear(uint32_t nrects, const Rect *rects, uint32_t flags, uint32_t c
     }
     if (!c.mask)
         return;
+    /* Any colour Clear (cutscenes clear only their letterboxed viewport): the frame
+     * is not drawn over the previous one; its bars stay the black it starts with. */
+    if (flags & 1u)
+        frame_cleared = frame_based = 1;
     c.restore_mask = !(flags & 2u);
     uint32_t n = nrects ? nrects : 1u;
     if (n > CLEAR_MAX_RECTS)
@@ -712,8 +716,7 @@ void render_clear(uint32_t nrects, const Rect *rects, uint32_t flags, uint32_t c
         }
         int full = l <= 0 && t <= 0 && rr >= rt_w && b >= rt_h;
         c.r[i].full = full && vp_w == fb_w && vp_h == fb_h;
-        if (full && (flags & 1u))
-            frame_cleared = frame_based = 1;   /* no kept picture under this frame */
+
         to_fb(l, t, rr - l, b - t, &c.r[i].x, &c.r[i].y, &c.r[i].w, &c.r[i].h);
     }
     send_params();
