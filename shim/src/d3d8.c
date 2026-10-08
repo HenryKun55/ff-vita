@@ -668,6 +668,7 @@ static void retire(uint32_t mem, uint64_t mark)
 static uint32_t st_inplace, st_other, st_renames;
 static uint64_t st_rename_bytes;
 static uint32_t st_rename_max, st_locks[3];   /* plain, DISCARD, NOOVERWRITE */
+static uint64_t st_draw_copy_bytes, st_draw_copy_shared;
 
 /* A recorded draw of buffer memory: vertices at verts, indices (or none) at
  * idx_src, rebased by -min on the render thread. */
@@ -816,8 +817,30 @@ static int pk_record_buffers(uint32_t prim, Buffer8 *vb, uint32_t voff, uint32_t
      * into the frame's memory (before the command is opened). */
     uint8_t *vcopy = NULL;
     if (vb->copy_draws) {
-        vcopy = rq_data((size_t)nv * stride);
-        memcpy(vcopy, g_mem + vb->mem + voff, (size_t)nv * stride);
+        /* The same range drawn again in this frame (more passes over a mesh) shares
+         * the copy: the frame's memory lives until the frame has been executed. */
+        static struct {
+            const Buffer8 *b;
+            uint32_t gen, voff, bytes, frame;
+            uint8_t *copy;
+        } seen[256];
+        const uint32_t bytes = nv * stride;
+        uint32_t h = (((uint32_t)(uintptr_t)vb >> 4) ^ voff * 0x9E3779B1u ^ bytes) & 255u;
+        if (seen[h].b == vb && seen[h].gen == vb->gen && seen[h].voff == voff && seen[h].bytes == bytes &&
+            seen[h].frame == g_frame_serial) {
+            vcopy = seen[h].copy;
+            st_draw_copy_shared += bytes;
+        } else {
+            st_draw_copy_bytes += bytes;
+            vcopy = rq_data(bytes);
+            memcpy(vcopy, g_mem + vb->mem + voff, bytes);
+            seen[h].b = vb;
+            seen[h].gen = vb->gen;
+            seen[h].voff = voff;
+            seen[h].bytes = bytes;
+            seen[h].frame = g_frame_serial;
+            seen[h].copy = vcopy;
+        }
     }
     PkBufDraw *c = rq_begin_fast(pk_exec_buf, sizeof(PkBufDraw));
     c->prim = prim;
@@ -934,8 +957,11 @@ static void dev_Present(Ctx *c)
     static uint32_t frames;
     if (++frames % 600u == 0u) {
         rt_log("d3d8 draws (600 frames): read in place %u, other %u; buffers renamed %u (%u KiB copied, largest %u "
-               "KiB); locks: %u plain, %u discard, %u nooverwrite", st_inplace, st_other, st_renames,
-               (unsigned)(st_rename_bytes / 1024u), st_rename_max / 1024u, st_locks[0], st_locks[1], st_locks[2]);
+               "KiB); locks: %u plain, %u discard, %u nooverwrite; draws copied %u KiB (%u KiB shared)", st_inplace,
+               st_other, st_renames, (unsigned)(st_rename_bytes / 1024u), st_rename_max / 1024u, st_locks[0],
+               st_locks[1], st_locks[2], (unsigned)(st_draw_copy_bytes / 1024u),
+               (unsigned)(st_draw_copy_shared / 1024u));
+        st_draw_copy_bytes = st_draw_copy_shared = 0;
         st_inplace = st_other = st_renames = 0;
         st_rename_bytes = 0;
         st_rename_max = st_locks[0] = st_locks[1] = st_locks[2] = 0;
