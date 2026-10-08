@@ -281,9 +281,22 @@ static void ft_to_tm(uint64_t ft, struct tm *tm, uint32_t *ms)
         *ms = (uint32_t)((ft / 10000ull) % 1000ull);
 }
 
+/* Days from 1970-01-01 to a civil date (no timegm in the Vita's newlib). */
+static int64_t days_from_civil(int64_t y, int64_t m, int64_t d)
+{
+    y -= m <= 2;
+    int64_t era = (y >= 0 ? y : y - 399) / 400;
+    int64_t yoe = y - era * 400;
+    int64_t doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    int64_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + doe - 719468;
+}
+
 static uint64_t tm_to_ft(struct tm *tm)
 {
-    return (uint64_t)timegm(tm) * 10000000ull + FT_UNIX_EPOCH;
+    int64_t days = days_from_civil(tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday);
+    int64_t secs = days * 86400 + tm->tm_hour * 3600 + tm->tm_min * 60 + tm->tm_sec;
+    return (uint64_t)secs * 10000000ull + FT_UNIX_EPOCH;
 }
 
 SHIM(kernel32, FileTimeToSystemTime)

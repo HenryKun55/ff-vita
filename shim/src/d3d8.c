@@ -606,6 +606,11 @@ static void dev_Present(Ctx *c)
 {
     back_buffer();
     render_present();
+    /* Clear clears only the viewport, so what is outside the game's viewport
+     * (the cutscene bars) is never drawn: start every frame black, as a fresh
+     * D3D back buffer is (vitaGL's are not cleared). */
+    Rect all = { 0, 0, (int32_t)dev.mode_w, (int32_t)dev.mode_h };
+    render_clear(1, &all, 3u, 0xFF000000u, 1.0f);
     ok_ret(c, 5);
 }
 

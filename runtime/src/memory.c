@@ -197,11 +197,23 @@ uint32_t heap_size(uint32_t ptr)
 /* The guest threads share the heap. */
 static pthread_mutex_t heap_lock = PTHREAD_MUTEX_INITIALIZER;
 
+/* Highest address handed out so far, logged in 16 MiB steps (memory budget). */
+static uint32_t heap_top, heap_top_logged;
+
 uint32_t heap_alloc(uint32_t size)
 {
     pthread_mutex_lock(&heap_lock);
     uint32_t p = heap_alloc_locked(size);
+    if (p && p + size > heap_top) {
+        heap_top = p + size;
+        if (heap_top - GUEST_HEAP_BASE >= heap_top_logged + (16u << 20)) {
+            heap_top_logged = (heap_top - GUEST_HEAP_BASE) & ~((16u << 20) - 1u);
+            rt_log("guest heap: %u MiB in use at the top", (heap_top - GUEST_HEAP_BASE) >> 20);
+        }
+    }
     pthread_mutex_unlock(&heap_lock);
+    if (!p)
+        rt_log("guest heap: out of memory for %u bytes", size);
     return p;
 }
 
