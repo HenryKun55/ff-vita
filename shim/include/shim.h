@@ -41,10 +41,6 @@ uint32_t win32_get_proc(const char *dll, const char *name);
 /* Win32 time helpers. */
 uint32_t win32_tick_count(void);
 uint64_t win32_perf_counter(void);
-/* Real microseconds (the game's clocks follow the benchmark clock when it is on). */
-uint64_t win32_real_us(void);
-/* 1 when the benchmark clock (bench_clock= / FF_BENCH_CLOCK) drives the game's clocks. */
-int win32_bench_clock_on(void);
 
 extern char g_cd_dir[1024];
 
