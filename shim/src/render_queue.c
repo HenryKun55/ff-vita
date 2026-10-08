@@ -1015,6 +1015,23 @@ void q_glTexImage2D_owned(GLenum target, GLint level, GLint ifmt, GLsizei w, GLs
     tex_record(x_tex_image, target, level, ifmt, 0, 0, w, h, border, fmt, type, pixels);
 }
 
+static void x_compressed_tex_image(const void *p)
+{
+    const a_tex *a = p;
+    /* x holds the byte size of the compressed image. */
+    glCompressedTexImage2D(a->target, a->level, (GLenum)a->ifmt, a->w, a->h, 0, a->x, a->pixels);
+}
+
+void q_glCompressedTexImage2D_owned(GLenum target, GLint level, GLenum ifmt, GLsizei w, GLsizei h, GLsizei bytes,
+                                    const void *data)
+{
+    if (!rq_on) {
+        glCompressedTexImage2D(target, level, ifmt, w, h, 0, bytes, data);
+        return;
+    }
+    tex_record(x_compressed_tex_image, target, level, (GLint)ifmt, bytes, 0, w, h, 0, 0, 0, data);
+}
+
 void q_glTexSubImage2D(GLenum target, GLint level, GLint x, GLint y, GLsizei w, GLsizei h, GLenum fmt, GLenum type,
                        const void *pixels)
 {

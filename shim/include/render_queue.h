@@ -125,6 +125,10 @@ void q_glBufferData(GLenum target, size_t size, const void *data, GLenum usage);
 void q_glTexImage2D(GLenum target, GLint level, GLint ifmt, GLsizei w, GLsizei h, GLint border, GLenum fmt,
                     GLenum type, const void *pixels);
 /* Same, for RGBA8 pixels in rq_data memory (not copied again). */
+/* Compressed (S3TC) image; data already in rq_data memory, or any memory without
+ * the render thread. */
+void q_glCompressedTexImage2D_owned(GLenum target, GLint level, GLenum ifmt, GLsizei w, GLsizei h, GLsizei bytes,
+                                    const void *data);
 void q_glTexImage2D_owned(GLenum target, GLint level, GLint ifmt, GLsizei w, GLsizei h, GLint border, GLenum fmt,
                           GLenum type, const void *pixels);
 void q_glTexSubImage2D(GLenum target, GLint level, GLint x, GLint y, GLsizei w, GLsizei h, GLenum fmt, GLenum type,

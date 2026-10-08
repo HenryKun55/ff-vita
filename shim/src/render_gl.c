@@ -943,6 +943,32 @@ static uint32_t texture_get(Surface *s)
     }
     glBindTexture(GL_TEXTURE_2D, s->gl_tex);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    if (surface_is_dxt(s)) {
+        /* Block compressed: every level as it is in guest memory (the GPU decodes
+         * S3TC), no conversion. */
+        static const GLenum dxt_fmt[3] = { 0x83F1 /* RGBA_S3TC_DXT1 */, 0x83F2 /* DXT3 */, 0x83F3 /* DXT5 */ };
+        GLenum ifmt = dxt_fmt[s->pf.bits == FOURCC_DXT1 ? 0 : s->pf.bits == FOURCC_DXT3 ? 1 : 2];
+        for (int level = 0; level < n; level++) {
+            Surface *m = lv[level];
+            surface_alloc_mem(m);
+            uint32_t bytes = surface_bytes(m);
+            const void *data = g_mem + m->mem;
+            if (rq_on) {
+                void *copy = rq_data(bytes);
+                memcpy(copy, data, bytes);
+                data = copy;
+            }
+            q_glCompressedTexImage2D_owned(GL_TEXTURE_2D, level, ifmt, (GLsizei)m->w, (GLsizei)m->h, (GLsizei)bytes, data);
+            hash_store(m, hv[level] ? hv[level] : surface_hash(m));
+            pc_frame[PC_TEX_BYTES] += bytes;
+            m->dirty = 0;
+        }
+        s->priv[0] = (uint32_t)(n - 1);
+        s->priv[TEXP_SAMPLER] = 0;
+        pc_frame[PC_TEX_N]++;
+        pc_frame[PC_TEX_US] += fine_now() - t0;
+        return s->gl_tex;
+    }
     for (int level = 0; level < n; level++) {
         Surface *m = lv[level];
         if (level == 0 || UPLOAD_MIP_PIXELS) {
@@ -1311,8 +1337,8 @@ static int streams_recorded(void)
  * With the render thread the game records up to one frame ahead of vitaGL:
  * one more segment, rotated with the frames presented here. */
 #define ARENA_SEGS 4u
-#define ARENA_VTX_BYTES (3u << 20)
-#define ARENA_IDX_BYTES (512u << 10)
+#define ARENA_VTX_BYTES (6u << 20)
+#define ARENA_IDX_BYTES (1u << 20)
 static uint8_t *arena_vtx[ARENA_SEGS];
 static uint16_t *arena_idx[ARENA_SEGS];
 static uint32_t arena_vpos, arena_ipos, arena_seg, arena_frame;
@@ -1371,6 +1397,14 @@ static void stream_begin(const Layout *L, uint32_t nv, uint32_t ni)
         uint32_t vc = vpos < ARENA_VTX_BYTES ? (ARENA_VTX_BYTES - vpos) / L->stride : 0u;
         uint32_t ic = (ARENA_IDX_BYTES - arena_ipos) / 2u;
         if (vc >= nv && ic >= ni) {
+            /* Busiest frame so far, in 512 KiB steps (to size the arena). */
+            static uint32_t peak_v, peak_i;
+            uint32_t v_end = vpos + nv * L->stride, i_end = arena_ipos + ni * 2u;
+            if (v_end > peak_v + (512u << 10) || i_end > peak_i + (512u << 10)) {
+                peak_v = v_end > peak_v ? v_end : peak_v;
+                peak_i = i_end > peak_i ? i_end : peak_i;
+                rt_log("render: frame vertex arena use up to %u KiB vertices, %u KiB indices", peak_v >> 10, peak_i >> 10);
+            }
             vtx = arena_vtx[arena_seg] + vpos;
             vtx_cap = vc < BATCH_MAX_V ? vc : BATCH_MAX_V;
             idx_out = arena_idx[arena_seg] + arena_ipos / 2u;
