@@ -78,3 +78,6 @@ Optional settings go in `ux0:data/ff/ff.cfg` (one `key=value` per line).
 | D-pad down | inventory wheel |
 | Rear touch upper / lower half | previous / next weapon |
 | Select / Start | map / menu |
+
+In the menus: D-pad or left stick moves through the options, Cross selects,
+Circle (or Start) goes back; the right stick and R still move and click the cursor.

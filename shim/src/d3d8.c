@@ -532,6 +532,7 @@ static uint16_t *index_scratch(uint32_t n)
 /* Draws `nv` vertices at guest address `va` with optional indices (already
  * relative to va). */
 static int offscreen(void);
+static void frame_draw(void);
 
 /* ---- pack thread (render.h) ----------------------------------------------------
  * With it on, a draw is recorded: the state snapshot (render_pk_prepare), then a
@@ -805,8 +806,7 @@ static void dev_Present(Ctx *c)
     /* Clear clears only the viewport, so what is outside the game's viewport
      * (the cutscene bars) is never drawn: start every frame black, as a fresh
      * D3D back buffer is (vitaGL's are not cleared). */
-    Rect all = { 0, 0, (int32_t)dev.mode_w, (int32_t)dev.mode_h };
-    render_clear(1, &all, 3u, 0xFF000000u, 1.0f);
+    render_clear_new_frame(dev.mode_w, dev.mode_h);
     ok_ret(c, 5);
 }
 
@@ -1005,6 +1005,7 @@ static void dev_CopyRects(Ctx *c)
             dy = (int32_t)RD32(points + i * 8u + 4u);
         }
         if (dst == dev.back) {
+            frame_draw();
             Rect dr = { dx, dy, dx + (sr.r - sr.l), dy + (sr.b - sr.t) };
             render_blit(src, &sr, &dr, 0);
         } else {
@@ -1045,6 +1046,13 @@ static void dev_SetRenderTarget(Ctx *c)
 }
 
 static int offscreen(void) { return dev.target != NULL; }
+
+/* Before a draw: into the back buffer, maybe over the previous frame (render_frame_draw). */
+static void frame_draw(void)
+{
+    if (!offscreen())
+        render_frame_draw();
+}
 
 static void dev_GetRenderTarget(Ctx *c)
 {
@@ -1713,6 +1721,7 @@ static Buffer8 *stream_buffer(void)
 /* DrawPrimitive(type, start vertex, primitive count) */
 static void dev_DrawPrimitive(Ctx *c)
 {
+    frame_draw();
     uint32_t prim = ARG(1), start = ARG(2), n = ARG(3);
     Buffer8 *vb = stream_buffer();
     if (vb) {
@@ -1727,6 +1736,7 @@ static void dev_DrawPrimitive(Ctx *c)
 /* DrawIndexedPrimitive(type, min index, vertex count, start index, primitive count) */
 static void dev_DrawIndexedPrimitive(Ctx *c)
 {
+    frame_draw();
     uint32_t prim = ARG(1), min = ARG(2), nv = ARG(3), start = ARG(4), n = ARG(5);
     Buffer8 *vb = stream_buffer();
     Buffer8 *ib = dev.ib ? com_host(dev.ib) : NULL;
@@ -1746,6 +1756,7 @@ static void dev_DrawIndexedPrimitive(Ctx *c)
 /* DrawPrimitiveUP(type, primitive count, vertices, stride) */
 static void dev_DrawPrimitiveUP(Ctx *c)
 {
+    frame_draw();
     uint32_t prim = ARG(1), n = ARG(2);
     draw_verts(prim, ARG(3), ARG(4), prim_vertices(prim, n), NULL, 0);
     dev.stream_vb = 0;                       /* as D3D8 does */
@@ -1757,6 +1768,7 @@ static void dev_DrawPrimitiveUP(Ctx *c)
  * index format, vertices, stride) */
 static void dev_DrawIndexedPrimitiveUP(Ctx *c)
 {
+    frame_draw();
     uint32_t prim = ARG(1), min = ARG(2), nv = ARG(3), n = ARG(4), ip = ARG(5), fmt = ARG(6);
     uint32_t va = ARG(7), stride = ARG(8);
     uint32_t ni = prim_vertices(prim, n);

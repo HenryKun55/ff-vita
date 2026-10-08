@@ -62,7 +62,8 @@ void platform_key(uint8_t dik, int down)
  * way the Vita's pad does (shim/src/pad_input.c), "key+K"/"key-K" hold/release DIK
  * code K (hex), "diag=N" renderer diagnostic mode N, "shot=NAME" a screenshot of
  * the next frame named NAME (Vita: captured from the Vita3K window by
- * tools/qa_vita3k.sh), "profreset" restart the profile (FF_PROFILE builds),
+ * tools/qa_vita3k.sh), "dump=NAME" the executable's data section into NAME.bin
+ * (finding game state by comparing dumps), "profreset" restart the profile (FF_PROFILE builds),
  * "quit" end the process (the profile written first). */
 void platform_scripted_input(void)
 {
@@ -145,6 +146,19 @@ void platform_scripted_input(void)
 #endif
                 platform_shutdown();
                 exit(0);
+            }
+            script = end ? end + 1 : NULL;
+            continue;
+        }
+        if (!strncmp(buf, "dump=", 5)) {
+            /* The executable's data section (0x74B000..0x8A4600), for finding game
+             * state by comparing dumps. */
+            char path[64];
+            snprintf(path, sizeof(path), "%s.bin", buf + 5);
+            FILE *f = fopen(path, "wb");
+            if (f) {
+                fwrite(g_mem + 0x74B000u, 1, 0x159600u, f);
+                fclose(f);
             }
             script = end ? end + 1 : NULL;
             continue;

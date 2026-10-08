@@ -576,11 +576,57 @@ static void maybe_screenshot(void)
 
 static void pk_frame_cmd(const void *unused);
 
+/* ---- kept frames -------------------------------------------------------------
+ * A D3D back buffer keeps its pixels across Present; GL's do not, and the device
+ * starts every frame black. The game relies on it on its loading screens: the
+ * picture is drawn once, then each frame only draws the progress bar over it,
+ * without a Clear. So a frame that draws without a full colour Clear first
+ * starts with the previous frame drawn back (bk_keep_restore: on the Vita a GPU
+ * blit of the front buffer; on the desktop the copy bk_keep_save made of it). */
+static int keep_valid;
+static int frame_cleared, frame_based, frame_drew;
+static unsigned st_kept;
+
+void render_frame_draw(void)
+{
+    frame_drew = 1;
+    if (frame_based)
+        return;
+    frame_based = 1;
+    if (keep_valid) {
+        render_flush();
+        send_params();
+        rq_exec(bk_keep_restore, NULL, 0);
+        st_kept++;
+    }
+}
+
+/* Before the swap: a frame that drew nothing still shows the previous one; this
+ * one is kept for the next. */
+static void keep_frame(void)
+{
+    if (!frame_based && keep_valid) {
+        render_frame_draw();
+        frame_drew = 0;
+    }
+    keep_valid = 1;
+#if !defined(__vita__)
+    rq_exec(bk_keep_save, NULL, 0);
+#endif
+    frame_cleared = frame_based = frame_drew = 0;
+    static unsigned frames;
+    if (++frames % 600u == 0u && st_kept) {
+        rt_log("frames drawn over the previous frame (600 frames): %u", st_kept);
+        st_kept = 0;
+    }
+}
+
 void render_present(void)
 {
     render_flush();
     if (g_pack_thread)
         rq_exec(pk_frame_cmd, NULL, 0);
+    keep_frame();
     g_frame_serial++;
     /* FF_TRACE_EVERY=N: trace (log every draw + save the image of) every Nth frame. */
     static int trace_every = -1;
@@ -666,10 +712,23 @@ void render_clear(uint32_t nrects, const Rect *rects, uint32_t flags, uint32_t c
         }
         int full = l <= 0 && t <= 0 && rr >= rt_w && b >= rt_h;
         c.r[i].full = full && vp_w == fb_w && vp_h == fb_h;
+        if (full && (flags & 1u))
+            frame_cleared = frame_based = 1;   /* no kept picture under this frame */
         to_fb(l, t, rr - l, b - t, &c.r[i].x, &c.r[i].y, &c.r[i].w, &c.r[i].h);
     }
     send_params();
     rq_exec(bk_clear, &c, offsetof(ClearCmd, r) + n * sizeof(c.r[0]));
+}
+
+/* The black a new D3D back buffer starts with (not a Clear of the game's: the
+ * frame still counts as drawn over the previous one). */
+void render_clear_new_frame(uint32_t w, uint32_t h)
+{
+    int cleared = frame_cleared, based = frame_based;
+    Rect all = { 0, 0, (int32_t)w, (int32_t)h };
+    render_clear(1, &all, 3u, 0xFF000000u, 1.0f);
+    frame_cleared = cleared;
+    frame_based = based;
 }
 
 void render_fill(const Rect *r, uint32_t rgba)

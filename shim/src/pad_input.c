@@ -9,7 +9,11 @@
  *   left / up / right  squad: form up (1), attack (2), defend (3)
  *   down  inventory wheel (middle button)
  *   SELECT  map (M)                      START  menu (Esc)
- *   rear touch  upper half previous weapon, lower half next (mouse wheel) */
+ *   rear touch  upper half previous weapon, lower half next (mouse wheel)
+ *
+ * In the menus (the game's keyboard navigation): D-pad and left stick the arrow
+ * keys, X Enter (select), O and START Esc (back), R the left mouse button (the
+ * right stick moves the cursor). */
 #include "pad_input.h"
 #include "platform.h"
 #include "runtime.h"
@@ -39,6 +43,10 @@ typedef struct Output {
 #define DIK_D 0x20
 #define DIK_M 0x32
 #define DIK_SPACE 0x39
+#define DIK_UP 0xC8
+#define DIK_LEFT 0xCB
+#define DIK_RIGHT 0xCD
+#define DIK_DOWN 0xD0
 
 static const Output control_out[PAD_CONTROL_COUNT] = {
     [PAD_CROSS] = { OUT_KEY, DIK_SPACE, OUT_KEY, DIK_RETURN },
@@ -57,6 +65,23 @@ static const Output control_out[PAD_CONTROL_COUNT] = {
     [PAD_LSTICK_DOWN] = KEY(DIK_S),
     [PAD_LSTICK_LEFT] = KEY(DIK_A),
     [PAD_LSTICK_RIGHT] = KEY(DIK_D),
+    [PAD_REAR_UP] = { OUT_WHEEL, 1, OUT_NONE, 0 },
+    [PAD_REAR_DOWN] = { OUT_WHEEL, 2, OUT_NONE, 0 },
+};
+
+static const Output menu_out[PAD_CONTROL_COUNT] = {
+    [PAD_CROSS] = KEY(DIK_RETURN),
+    [PAD_CIRCLE] = KEY(DIK_ESCAPE),
+    [PAD_R] = MOUSE(0),
+    [PAD_START] = KEY(DIK_ESCAPE),
+    [PAD_DPAD_UP] = KEY(DIK_UP),
+    [PAD_DPAD_DOWN] = KEY(DIK_DOWN),
+    [PAD_DPAD_LEFT] = KEY(DIK_LEFT),
+    [PAD_DPAD_RIGHT] = KEY(DIK_RIGHT),
+    [PAD_LSTICK_UP] = KEY(DIK_UP),
+    [PAD_LSTICK_DOWN] = KEY(DIK_DOWN),
+    [PAD_LSTICK_LEFT] = KEY(DIK_LEFT),
+    [PAD_LSTICK_RIGHT] = KEY(DIK_RIGHT),
     [PAD_REAR_UP] = { OUT_WHEEL, 1, OUT_NONE, 0 },
     [PAD_REAR_DOWN] = { OUT_WHEEL, 2, OUT_NONE, 0 },
 };
@@ -109,11 +134,13 @@ static void output(uint8_t kind, uint8_t code, int down)
     }
 }
 
-/* No reliable menu/gameplay signal from the game yet: the controls are the same
- * everywhere (the menus take Enter, Esc, the mouse cursor and its left button). */
+/* The game's menu mode (main menu, pause menu and their screens: 1, 0 in play),
+ * the flag its cursor functions (0x685F90) test. */
+#define GAME_MENU_MODE 0x7A3008u
+
 int pad_in_gameplay(void)
 {
-    return 0;
+    return RD32(GAME_MENU_MODE) == 0u;
 }
 
 int pad_capturing_key(void)
@@ -123,11 +150,21 @@ int pad_capturing_key(void)
 
 void pad_control(PadControl control, int down)
 {
+    /* What each held control pressed, so its release lets go of that even if the
+     * game went between play and the menus meanwhile. */
+    static Output held[PAD_CONTROL_COUNT];
     if ((unsigned)control >= PAD_CONTROL_COUNT)
         return;
-    const Output *o = &control_out[control];
+    Output *o = &held[control];
+    if (down) {
+        output(o->kind, o->code, 0);
+        output(o->kind2, o->code2, 0);
+        *o = pad_in_gameplay() ? control_out[control] : menu_out[control];
+    }
     output(o->kind, o->code, down);
     output(o->kind2, o->code2, down);
+    if (!down)
+        *o = (Output){ OUT_NONE, 0, OUT_NONE, 0 };
 }
 
 void pad_tick(void)

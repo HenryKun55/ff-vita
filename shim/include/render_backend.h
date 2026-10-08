@@ -116,6 +116,10 @@ void bk_init(const void *unused);       /* viewport and clear after a mode set *
 void bk_bars(const void *unused);       /* black bars around the game image */
 void bk_clear(const void *clear_cmd);
 void bk_quad(const void *quad_cmd);
+/* Kept frames (render_gl.c): the frame just drawn copied for the next one (desktop;
+ * the Vita reads its front buffer instead), and drawn back under a new frame. */
+void bk_keep_save(const void *unused);
+void bk_keep_restore(const void *unused);
 void bk_lights(const void *light_snapshot);
 void bk_draw(const void *draw_cmd);
 /* Sends a texture stage's sampler state on its own (normally part of bk_draw). */

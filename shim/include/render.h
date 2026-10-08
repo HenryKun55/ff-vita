@@ -98,6 +98,11 @@ int render_draw_vb(void **slot, uint32_t gen, const RVertex *all, uint32_t count
                    int ntex);
 void render_vb_release(void **slot);
 void render_clear(uint32_t nrects, const Rect *rects, uint32_t flags, uint32_t color, float z);
+/* Before every draw into the back buffer: a frame that draws without clearing
+ * first is drawn over the previous one (kept by render_present). */
+void render_frame_draw(void);
+/* After Present: the new frame's back buffer black, as D3D's start. */
+void render_clear_new_frame(uint32_t w, uint32_t h);
 
 /* ---- pack thread ------------------------------------------------------------
  * With the render thread on, the game thread only records each draw: copies of

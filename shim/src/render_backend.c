@@ -673,6 +673,87 @@ void bk_quad(const void *p)
     glEnd();
 }
 
+/* The game image's GL rectangle (y up). */
+static void game_rect(GLint *x, GLint *y, GLsizei *w, GLsizei *h)
+{
+    *x = B.vp_x;
+    *y = B.vp_y;
+    *w = B.vp_w;
+    *h = B.vp_h;
+}
+
+#if !defined(__vita__)
+static GLuint keep_tex;
+static int keep_tex_w, keep_tex_h;
+
+void bk_keep_save(const void *unused)
+{
+    (void)unused;
+    GLint x, y;
+    GLsizei w, h;
+    game_rect(&x, &y, &w, &h);
+    if (!keep_tex)
+        glGenTextures(1, &keep_tex);
+    glBindTexture(GL_TEXTURE_2D, keep_tex);
+    if (w != keep_tex_w || h != keep_tex_h) {
+        glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, x, y, w, h, 0);
+        keep_tex_w = w;
+        keep_tex_h = h;
+    } else {
+        glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, x, y, w, h);
+    }
+}
+#else
+void bk_keep_save(const void *unused) { (void)unused; }
+#endif
+
+void bk_keep_restore(const void *unused)
+{
+    (void)unused;
+    GLint x, y;
+    GLsizei w, h;
+    game_rect(&x, &y, &w, &h);
+#if defined(__vita__)
+    /* A GPU copy of the frame on screen (vitaGL reads the display's front buffer). */
+    glReadBuffer(GL_FRONT);
+    glBlitFramebuffer(x, y, x + w, y + h, x, y, x + w, y + h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    glReadBuffer(GL_BACK);
+#else
+    if (!keep_tex || keep_tex_w != w || keep_tex_h != h)
+        return;
+    glBindTexture(GL_TEXTURE_2D, keep_tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glActiveTexture(GL_TEXTURE1);
+    glDisable(GL_TEXTURE_2D);
+    glActiveTexture(GL_TEXTURE0);
+    glEnable(GL_TEXTURE_2D);
+    glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_LIGHTING);
+    glDisable(GL_FOG);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_ALPHA_TEST);
+    glDisable(GL_BLEND);
+    load_screen_ortho(0);
+    float m[16];
+    ortho_matrix(0, B.rt_w, B.rt_h, 0, -1, 1, m);
+    c_load_matrix(GL_PROJECTION, m);
+    /* The copy is bottom-up. */
+    glBegin(GL_QUADS);
+    glTexCoord2f(0.0f, 1.0f);
+    glVertex2f(0.0f, 0.0f);
+    glTexCoord2f(1.0f, 1.0f);
+    glVertex2f((float)B.rt_w, 0.0f);
+    glTexCoord2f(1.0f, 0.0f);
+    glVertex2f((float)B.rt_w, (float)B.rt_h);
+    glTexCoord2f(0.0f, 0.0f);
+    glVertex2f(0.0f, (float)B.rt_h);
+    glEnd();
+#endif
+}
+
 /* ---- 3D state ----------------------------------------------------------- */
 
 static GLenum gl_blend(uint32_t b)
