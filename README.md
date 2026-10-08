@@ -44,9 +44,9 @@ cmake --build build
 cd gamedata/pc && ../../build/ff .
 ```
 
-The window can be closed at any time. The mouse is not captured unless
-`FF_GRAB=1`. `Freedom.ini` sets the resolution (`Resolution 960x544` is the
-Vita's).
+The window can be closed at any time. Click in it to capture the mouse
+(unlimited turning); Cmd releases it. `Freedom.ini` sets the resolution
+(`Resolution 960x544` is the Vita's).
 
 Diagnostics: `FF_LOG_CALLS=<seconds>` logs every host call for 100 ms from that
 time; `FF_SHOT=N` saves every Nth frame as a BMP; `FF_TRACE_EVERY=N` logs every

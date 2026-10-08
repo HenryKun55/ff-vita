@@ -310,26 +310,29 @@ static void quit_watchdog_start(void)
     }
 }
 
-/* Mouse capture requested by DirectInput; re-applied whenever the window gets focus,
- * because macOS ignores relative mode for an unfocused window. */
-static int mouse_capture_wanted;
+/* Mouse capture: the game acquires the mouse through DirectInput for the whole
+ * session (its menus have their own cursor too). On the desktop the player
+ * decides: a click in the window captures it (relative mode: unlimited turning),
+ * Cmd or leaving the window releases it. FF_GRAB=1 captures from the start.
+ * Re-applied whenever the window gets focus, because macOS ignores relative
+ * mode for an unfocused window. */
+static int mouse_capture_wanted, user_grab = -1;
 
 static void apply_mouse_capture(void)
 {
     if (!window)
         return;
-    int on = mouse_capture_wanted && (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS);
+    if (user_grab < 0) {
+        const char *g = getenv("FF_GRAB");
+        user_grab = g && g[0] == '1';
+    }
+    int on = mouse_capture_wanted && user_grab && (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS);
     SDL_SetWindowGrab(window, on ? SDL_TRUE : SDL_FALSE);
     SDL_SetRelativeMouseMode(on ? SDL_TRUE : SDL_FALSE);
 }
 
-/* The game acquires the mouse for the whole session (menus included), so on the
- * desktop the cursor stays free unless FF_GRAB=1. */
 void platform_capture_mouse(int on)
 {
-    const char *g = getenv("FF_GRAB");
-    if (!(g && g[0] == '1'))
-        on = 0;
     mouse_capture_wanted = on;
     apply_mouse_capture();
 }
@@ -377,6 +380,11 @@ static void handle_event(const SDL_Event *e)
             break;
         }
         int down = e->type == SDL_KEYDOWN;
+        if (down && (e->key.keysym.sym == SDLK_LGUI || e->key.keysym.sym == SDLK_RGUI) && user_grab > 0) {
+            user_grab = 0;             /* Cmd: let go of the mouse */
+            apply_mouse_capture();
+            break;
+        }
         uint8_t dik = sdl_to_dik(e->key.keysym.scancode);
         if (dik) {
             if (!e->key.repeat) {
@@ -413,6 +421,11 @@ static void handle_event(const SDL_Event *e)
     case SDL_MOUSEBUTTONDOWN:
     case SDL_MOUSEBUTTONUP: {
         int down = e->type == SDL_MOUSEBUTTONDOWN;
+        if (down && mouse_capture_wanted && user_grab <= 0) {
+            user_grab = 1;             /* a click captures the mouse (and is not passed on) */
+            apply_mouse_capture();
+            break;
+        }
         int b = e->button.button == SDL_BUTTON_LEFT ? 0 : e->button.button == SDL_BUTTON_RIGHT ? 1 :
                 e->button.button == SDL_BUTTON_MIDDLE ? 2 : 3;
         g_mouse.buttons[b] = down ? 0x80 : 0;
@@ -432,6 +445,8 @@ static void handle_event(const SDL_Event *e)
             user32_post_message(0x0006, 1, 0);   /* WM_ACTIVATE */
         } else if (e->window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
             memset(g_key_state, 0, sizeof(g_key_state));
+            user_grab = 0;
+            apply_mouse_capture();
         }
         break;
     default:
