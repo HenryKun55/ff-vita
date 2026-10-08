@@ -87,6 +87,9 @@ NATIVE = {
         (0x005F83B0, 31, '2052b11c3eb570f3acac63351149b4f44a9ea96d'),   # vector scale it calls
     ]),    # Segment / axis-aligned box test (runtime/src/native_raybox.c).
     0x005FF460: ('rt_native_segment_box', [(0x005FF460, 723, '65773ff6c1f03992cbff624ae5cfcaff2362de31')]),
+    # Vertex colours into the lighting factors, and the lit colours back (runtime/src/native_vcolor.c).
+    0x00691410: ('rt_native_colors_in', [(0x00691410, 413, 'a1401185b69977956634161713acd5dfcaab5386')]),
+    0x006915B0: ('rt_native_colors_out', [(0x006915B0, 304, '78b1f8422fece34b16771082210a98e851f7de45')]),
 }
 
 # Native versions of a part of a function: hook address -> (host function,
