@@ -1,6 +1,7 @@
 /* Loads Freedom.Exe into guest memory, wires imports to host thunks, and runs it. */
 #include "runtime.h"
 
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -21,23 +22,41 @@ static double log_time(void)
     return (double)win32_perf_counter_ms() / 1000.0;
 }
 
+/* One line per call, whole lines even from several threads. The log file is
+ * buffered and written out at most every 250 ms (on the Vita every write is a
+ * slow call into the file system) and at once for fatal errors (rt_log_flush).
+ * The Vita has no console: stderr only on the desktop. */
+static pthread_mutex_t log_lock = PTHREAD_MUTEX_INITIALIZER;
+static double log_flushed_at;
+
+void rt_log_flush(void)
+{
+    pthread_mutex_lock(&log_lock);
+    if (log_file)
+        fflush(log_file);
+    pthread_mutex_unlock(&log_lock);
+}
+
 void rt_log(const char *fmt, ...)
 {
+    char line[2048];
     va_list ap;
-    fprintf(stderr, "[%7.3f] ", log_time());
-    if (log_file)
-        fprintf(log_file, "[%7.3f] ", log_time());
     va_start(ap, fmt);
-    vfprintf(stderr, fmt, ap);
-    fputc('\n', stderr);
+    vsnprintf(line, sizeof(line), fmt, ap);
     va_end(ap);
+    double t = log_time();
+    pthread_mutex_lock(&log_lock);
+#if !defined(__vita__)
+    fprintf(stderr, "[%7.3f] %s\n", t, line);
+#endif
     if (log_file) {
-        va_start(ap, fmt);
-        vfprintf(log_file, fmt, ap);
-        fputc('\n', log_file);
-        fflush(log_file);
-        va_end(ap);
+        fprintf(log_file, "[%7.3f] %s\n", t, line);
+        if (t - log_flushed_at >= 0.25) {
+            fflush(log_file);
+            log_flushed_at = t;
+        }
     }
+    pthread_mutex_unlock(&log_lock);
 }
 
 void rt_fatal(Ctx *c, const char *fmt, ...)
@@ -59,6 +78,7 @@ void rt_fatal(Ctx *c, const char *fmt, ...)
             rt_log("    [esp+%02X] %08X", i * 4u, RD32(a));
         }
     }
+    rt_log_flush();
     platform_shutdown();
     exit(1);
 }
@@ -321,7 +341,7 @@ int main(int argc, char **argv)
 #endif
     snprintf(g_game_dir, sizeof(g_game_dir), "%s", dir);
     if (log_file)
-        setvbuf(log_file, NULL, _IONBF, 0);
+        setvbuf(log_file, NULL, _IOFBF, 64 * 1024);
 
     mem_init();
     mem_report("start");

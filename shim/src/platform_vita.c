@@ -124,6 +124,7 @@ static int exit_watchdog(SceSize args, void *argp)
  * should that never finish (a stuck GPU job), a watchdog ends the process anyway. */
 void platform_shutdown(void)
 {
+    rt_log_flush();
     SceUID w = sceKernelCreateThread("ff_exit_watchdog", exit_watchdog, 0x10000100, 0x4000, 0, 0, NULL);
     if (w >= 0)
         sceKernelStartThread(w, 0, NULL);

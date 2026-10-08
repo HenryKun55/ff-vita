@@ -340,6 +340,7 @@ void platform_capture_mouse(int on)
 /* Stop the audio thread (it reads guest memory) before the process goes away. */
 void platform_shutdown(void)
 {
+    rt_log_flush();
     render_shutdown();
     SDL_Quit();
 }

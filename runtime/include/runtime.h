@@ -81,6 +81,8 @@ static inline void stdcall_ret(Ctx *c, uint32_t value, int nargs)
 void rt_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void rt_fatal(Ctx *c, const char *fmt, ...) __attribute__((format(printf, 2, 3), noreturn));
 void rt_missing_import(Ctx *c, const char *name);
+/* Writes out the buffered log (before exiting). */
+void rt_log_flush(void);
 
 /* Game data directory (contains Freedom.Exe and the game folders). */
 extern char g_game_dir[1024];
