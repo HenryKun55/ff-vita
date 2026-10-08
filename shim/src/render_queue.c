@@ -255,6 +255,7 @@ void rq_sync(void)
 /* ---- render thread ------------------------------------------------------------- */
 
 extern uint64_t win32_perf_counter(void);
+extern uint64_t win32_real_us(void);
 
 /* The render thread's own clock: win32_perf_counter is the game's (FF_FAKE_CLOCK
  * advances it per call, so calls from here would change the game's timing). */
@@ -420,10 +421,10 @@ static void cmd_swap(const void *a)
 
 uint64_t rq_swap_end_frame(void)
 {
-    uint64_t t0 = win32_perf_counter();
+    uint64_t t0 = win32_real_us();
     if (!rq_on) {
         platform_swap();
-        return win32_perf_counter() - t0;
+        return win32_real_us() - t0;
     }
     rq_cmd(cmd_swap, 0);
     rq_cmd(cmd_end_frame, 0);
@@ -436,7 +437,7 @@ uint64_t rq_swap_end_frame(void)
     rq_rec_chunk->used = 0;
     arena_reset(&s->data);
     arena_reset(&s->vtx);
-    return win32_perf_counter() - t0;
+    return win32_real_us() - t0;
 }
 
 void rq_shutdown(void)

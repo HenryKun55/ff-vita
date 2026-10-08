@@ -928,7 +928,7 @@ SHIM(kernel32, FindClose)
 #include <psp2/kernel/processmgr.h>
 static uint64_t t0_us;
 
-static uint64_t now_us(void) { return sceKernelGetProcessTimeWide(); }
+static uint64_t real_us(void) { return sceKernelGetProcessTimeWide(); }
 #else
 static uint64_t t0_us;
 
@@ -938,7 +938,7 @@ static uint64_t t0_us;
 static int fake_clock = -1;
 static uint64_t fake_us, fake_step;
 
-static uint64_t now_us(void)
+static uint64_t real_us(void)
 {
     if (fake_clock < 0) {
         const char *e = getenv("FF_FAKE_CLOCK");
@@ -953,6 +953,60 @@ static uint64_t now_us(void)
     return (uint64_t)t.tv_sec * 1000000ull + (uint64_t)t.tv_nsec / 1000ull;
 }
 #endif
+
+/* Benchmark clock: with bench_clock=N in ux0:data/ff/ff.cfg (desktop:
+ * FF_BENCH_CLOCK=N) the game's clocks advance N microseconds per presented frame
+ * (and 1 per query within a frame, so waits still end), whatever the frame cost:
+ * every run plays the same frames, scripted input lands on the same frames, and
+ * the real time each frame took (win32_real_us) compares builds. */
+extern uint32_t g_frame_serial;
+static int bench_clock = -1;
+static uint64_t bench_step, bench_last;
+
+static uint64_t real_us(void);
+
+static void bench_clock_init(void)
+{
+    bench_step = 0;
+#if defined(__vita__)
+    FILE *f = fopen("ux0:data/ff/ff.cfg", "r");
+    if (f) {
+        char buf[128];
+        while (fgets(buf, sizeof(buf), f))
+            if (!strncmp(buf, "bench_clock=", 12))
+                bench_step = strtoull(buf + 12, NULL, 10);
+        fclose(f);
+    }
+#else
+    const char *e = getenv("FF_BENCH_CLOCK");
+    bench_step = e ? strtoull(e, NULL, 10) : 0u;
+#endif
+    bench_clock = bench_step != 0;
+}
+
+static uint64_t game_us(void)
+{
+    if (bench_clock < 0)
+        bench_clock_init();
+    if (!bench_clock)
+        return real_us();
+    uint64_t t = 1000000u + (uint64_t)g_frame_serial * bench_step;
+    bench_last = t > bench_last ? t : bench_last + 1u;
+    return bench_last;
+}
+
+int win32_bench_clock_on(void)
+{
+    if (bench_clock < 0)
+        bench_clock_init();
+    return bench_clock;
+}
+
+/* Real time, for frame statistics (not affected by the benchmark clock). */
+uint64_t win32_real_us(void)
+{
+    return real_us() - t0_us;
+}
 
 /* Microseconds -> milliseconds without a 64-bit division (a library call on the
  * Vita's CPU; the game polls the tick count thousands of times per frame): only
@@ -975,20 +1029,20 @@ static uint32_t us_to_ms(uint64_t us)
 
 uint32_t win32_tick_count(void)
 {
-    return us_to_ms(now_us() - t0_us);
+    return us_to_ms(game_us() - t0_us);
 }
 
 uint64_t win32_perf_counter(void)
 {
-    return now_us() - t0_us;
+    return game_us() - t0_us;
 }
 
 /* Milliseconds since start, for log timestamps (valid before kernel32_init too). */
 uint32_t win32_perf_counter_ms(void)
 {
     if (!t0_us)
-        t0_us = now_us();
-    return (uint32_t)((now_us() - t0_us) / 1000ull);
+        t0_us = game_us();
+    return (uint32_t)((game_us() - t0_us) / 1000ull);
 }
 
 /* Time the game spent waiting for its next fixed step (its 30 fps cap), for
@@ -1174,7 +1228,7 @@ SHIM(kernel32, GetLocaleInfoA) { stdcall_ret(c, 0, 4); }
 void kernel32_init(void)
 {
     if (!t0_us)
-        t0_us = now_us();
+        t0_us = game_us();
     cmdline = scratch_strdup(WIN_INSTALL_DIR "\\Freedom.Exe");
     env_block = scratch_alloc(4, 4);
     env_block_w = scratch_alloc(4, 4);

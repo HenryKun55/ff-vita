@@ -35,6 +35,7 @@ uint32_t g_frame_serial;
 static uint32_t perf_gpu_draws;   /* draws actually submitted to GL this frame */
 static void perf_frame_begin_swap(void);
 static void perf_swap(void);
+static uint64_t bench_wait_us;
 
 extern uint64_t win32_perf_counter(void);   /* microseconds */
 
@@ -628,6 +629,18 @@ void render_present(void)
         rq_exec(pk_frame_cmd, NULL, 0);
     keep_frame();
     g_frame_serial++;
+    /* Benchmark clock: the real time of every 300 game frames (the same frames in
+     * every run), for comparing builds (tools/bench_view_vita3k.sh). */
+    if (win32_bench_clock_on() && g_frame_serial % 300u == 0u) {
+        static uint64_t mark;
+        uint64_t now = win32_real_us();
+        if (mark)
+            rt_log("bench: frames %u-%u: %.2f ms per frame, game thread busy %.2f ms", g_frame_serial - 300u,
+                   g_frame_serial, (double)(now - mark) / 300.0 / 1000.0,
+                   (double)(now - mark - bench_wait_us) / 300.0 / 1000.0);
+        mark = now;
+        bench_wait_us = 0;
+    }
     /* FF_TRACE_EVERY=N: trace (log every draw + save the image of) every Nth frame. */
     static int trace_every = -1;
     static unsigned present_count;
@@ -3290,7 +3303,7 @@ static void perf_frame_begin_swap(void)
         perf.enabled = e && e[0] == '1';
 #endif
     }
-    uint64_t now = win32_perf_counter();
+    uint64_t now = win32_real_us();
     if (!perf.frame_start) {
         perf.frame_start = now;
         perf.window_start = now;
@@ -3362,8 +3375,11 @@ static void perf_frame_begin_swap(void)
 }
 
 /* With the render thread: the time the game waited for the previous frame. */
+/* game thread waiting in the swap (render thread, vsync) */
+
 static void perf_swap(void)
 {
     perf.last_swap_us = rq_swap_end_frame();
     perf.acc_swap += perf.last_swap_us;
+    bench_wait_us += perf.last_swap_us;
 }
