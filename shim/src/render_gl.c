@@ -948,6 +948,13 @@ static uint32_t texture_get(Surface *s)
          * S3TC), no conversion. */
         static const GLenum dxt_fmt[3] = { 0x83F1 /* RGBA_S3TC_DXT1 */, 0x83F2 /* DXT3 */, 0x83F3 /* DXT5 */ };
         GLenum ifmt = dxt_fmt[s->pf.bits == FOURCC_DXT1 ? 0 : s->pf.bits == FOURCC_DXT3 ? 1 : 2];
+#if defined(__vita__)
+        /* vitaGL reallocates and copies the whole chain for every compressed level
+         * after the first (and that realloc crashed): level 0 only, no mipmaps. */
+        n = 1;
+        for (Surface *m = next_mip(s); m; m = next_mip(m))
+            m->dirty = 0;
+#endif
         for (int level = 0; level < n; level++) {
             Surface *m = lv[level];
             surface_alloc_mem(m);
