@@ -1,0 +1,124 @@
+cmake_minimum_required(VERSION 3.20)
+project(ff-port C)
+
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE RelWithDebInfo)
+endif()
+
+# The recompiled code is generated from the user's own copy of the game.
+set(FF_EXE "${CMAKE_SOURCE_DIR}/gamedata/pc/Freedom.Exe" CACHE FILEPATH "Path to the retail Freedom.Exe")
+if(NOT EXISTS "${FF_EXE}")
+    message(FATAL_ERROR "Freedom.Exe not found at ${FF_EXE}; pass -DFF_EXE=/path/to/Freedom.Exe")
+endif()
+
+# The port's version: major.minor.patch, each 0-9 for minor and patch (the Vita's
+# APP_VER is NN.NN: 0.1.0 -> 00.10, 1.2.3 -> 01.23).
+set(FF_PORT_VERSION "0.0.1")
+if(NOT FF_PORT_VERSION MATCHES "^([0-9]+)\\.([0-9])\\.([0-9])$")
+    message(FATAL_ERROR "FF_PORT_VERSION must be major.minor.patch with one-digit minor and patch")
+endif()
+math(EXPR FF_VERSION_MAJOR "${CMAKE_MATCH_1}")
+if(FF_VERSION_MAJOR LESS 10)
+    set(FF_VERSION_MAJOR "0${FF_VERSION_MAJOR}")
+endif()
+set(FF_APP_VER "${FF_VERSION_MAJOR}.${CMAKE_MATCH_2}${CMAKE_MATCH_3}")
+
+if(DEFINED VITA_ELF_CREATE)
+    # PlayStation Vita (vitasdk toolchain file).
+    set(VITA TRUE)
+    include("$ENV{VITASDK}/share/vita.cmake" REQUIRED)
+    set(VITA_TITLEID "FFRD00001" CACHE STRING "Vita title id")
+    set(VITA_VERSION "${FF_APP_VER}")
+    add_compile_definitions(__vita__)
+    add_compile_options(-mcpu=cortex-a9 -mfpu=neon -mfloat-abi=hard -fno-short-enums
+                        -ffunction-sections -fdata-sections -fno-pic -fno-pie)
+    add_link_options(-Wl,-q -Wl,--gc-sections -static -fno-short-enums -Wl,--no-warn-mismatch -Wl,-z,noexecstack)
+endif()
+
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(GEN_DIR "${CMAKE_BINARY_DIR}/gen")
+file(GLOB RECOMP_TOOLS "${CMAKE_SOURCE_DIR}/tools/recomp/*.py")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${RECOMP_TOOLS} "${FF_EXE}")
+# Diagnostic entry probes (hex guest addresses), e.g. -DFF_PROBES="497620 4E7960".
+set(FF_PROBES "" CACHE STRING "Guest functions to instrument with rt_probe")
+
+message(STATUS "Recompiling ${FF_EXE}")
+execute_process(
+    COMMAND ${CMAKE_COMMAND} -E env "FF_PROBES=${FF_PROBES}"
+            "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/recomp/gen.py" "${FF_EXE}" "${GEN_DIR}"
+    RESULT_VARIABLE GEN_RESULT
+    OUTPUT_VARIABLE GEN_OUTPUT)
+if(NOT GEN_RESULT EQUAL 0)
+    message(FATAL_ERROR "recompiler failed:\n${GEN_OUTPUT}")
+endif()
+message(STATUS "${GEN_OUTPUT}")
+
+file(STRINGS "${GEN_DIR}/files.txt" GEN_FILES)
+list(TRANSFORM GEN_FILES PREPEND "${GEN_DIR}/")
+
+add_library(ff_recomp STATIC ${GEN_FILES})
+target_include_directories(ff_recomp PUBLIC runtime/include "${GEN_DIR}")
+# Guest code relies on x86 semantics: wrapping signed arithmetic, type punning
+# and signed char. Without these, GCC (Vita) and clang (macOS) optimize the
+# recompiled code differently.
+target_compile_options(ff_recomp PRIVATE -Wall -Wextra -O2 -fwrapv -fno-strict-aliasing -fsigned-char
+                       -Wno-unused-label -Wno-unused-variable -Wno-unused-but-set-variable)
+# Generated-code variants (see runtime/include/recomp.h). FF_X87_FLOAT trades x87
+# exactness for speed; FF_X87_CHECK verifies the static x87 stack analysis.
+option(FF_X87_FLOAT "Single-precision x87 registers in generated code (faster, inexact)" OFF)
+option(FF_X87_CHECK "Check statically derived x87 stack effects at run time" OFF)
+if(FF_X87_FLOAT)
+    target_compile_definitions(ff_recomp PRIVATE FF_X87_FLOAT)
+endif()
+if(FF_X87_CHECK)
+    target_compile_definitions(ff_recomp PRIVATE FF_X87_CHECK)
+endif()
+
+file(GLOB RUNTIME_SOURCES CONFIGURE_DEPENDS runtime/src/*.c)
+file(GLOB SHIM_SOURCES CONFIGURE_DEPENDS shim/src/*.c)
+
+add_executable(ff ${RUNTIME_SOURCES} ${SHIM_SOURCES})
+target_include_directories(ff PRIVATE runtime/include shim/include "${GEN_DIR}")
+target_compile_options(ff PRIVATE -Wall -Wextra -fwrapv -fno-strict-aliasing -fsigned-char)
+target_compile_definitions(ff PRIVATE FF_PORT_VERSION="${FF_PORT_VERSION}")
+# Sampling profiler (runtime/src/profile.c). No cost when OFF.
+option(FF_PROFILE "Build with the sampling profiler" OFF)
+if(FF_PROFILE)
+    target_compile_definitions(ff_recomp PUBLIC FF_PROFILE)
+    target_compile_definitions(ff PRIVATE FF_PROFILE)
+endif()
+
+if(VITA)
+    target_include_directories(ff PRIVATE "$ENV{VITASDK}/arm-vita-eabi/include/SDL2")
+    set(FF_VITAGL_DIR "${CMAKE_SOURCE_DIR}/deps/vita" CACHE PATH "Prefix of the private vitaGL build")
+    if(EXISTS "${FF_VITAGL_DIR}/lib/libvitaGL.a")
+        message(STATUS "Using the private vitaGL in ${FF_VITAGL_DIR}")
+        target_include_directories(ff BEFORE PRIVATE "${FF_VITAGL_DIR}/include")
+        set(FF_VITAGL_LIB "${FF_VITAGL_DIR}/lib/libvitaGL.a")
+    else()
+        message(STATUS "Private vitaGL not built: using the SDK's (tools/build_vitagl_vita.sh)")
+        set(FF_VITAGL_LIB vitaGL)
+    endif()
+    target_link_libraries(ff PRIVATE ff_recomp
+        SDL2 ${FF_VITAGL_LIB} vitashark SceShaccCgExt mathneon taihen_stub
+        SceShaccCg_stub SceKernelDmacMgr_stub SceCtrl_stub SceTouch_stub SceHid_stub SceMotion_stub
+        SceAudio_stub SceAudioIn_stub SceDisplay_stub SceGxm_stub SceCommonDialog_stub SceSysmodule_stub
+        ScePower_stub SceAppMgr_stub SceAppUtil_stub SceIme_stub SceLibKernel_stub SceProcessmgr_stub
+        SceIofilemgr_stub
+        z stdc++ pthread m c)
+    vita_create_self(eboot.bin ff UNSAFE)
+    vita_create_vpk(ff.vpk ${VITA_TITLEID} eboot.bin
+        VERSION ${VITA_VERSION}
+        NAME "Freedom Fighters")
+else()
+    find_package(SDL2 REQUIRED)
+    find_package(OpenGL REQUIRED)
+    target_link_libraries(ff PRIVATE ff_recomp SDL2::SDL2 OpenGL::GL m)
+    if(APPLE)
+        target_link_libraries(ff PRIVATE "-framework CoreFoundation")
+    else()
+        target_link_libraries(ff PRIVATE pthread)
+    endif()
+endif()
