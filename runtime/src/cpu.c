@@ -511,11 +511,13 @@ void rt_cpuid(Ctx *c)
         c->r[2] = 0x49656E69u;
         c->r[1] = 0x6C65746Eu;
         break;
-    case 1:                                 /* Pentium III: FPU, TSC, CMOV, MMX, FXSR, SSE */
-        c->r[0] = 0x00000672u;              /* (MMX and SSE: runtime/include/simd.h) */
+    case 1:                                 /* Pentium Pro class: FPU, TSC, CMOV; no MMX/SSE */
+        c->r[0] = 0x00000611u;              /* (the game's SSE paths, lighting 0x006A6790 among them,
+                                             * ran slower through simd.h than its x87 ones with the
+                                             * native lighting: runtime/src/native_light.c) */
         c->r[3] = 0;
         c->r[1] = 0;
-        c->r[2] = 0x03808011u;
+        c->r[2] = 0x00008011u;
         break;
     default:                                /* no extended leaves (no 3DNow!) */
         c->r[0] = 0;
