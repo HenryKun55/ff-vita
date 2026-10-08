@@ -5,15 +5,19 @@
 # shim/src/platform_common.c), captures the Vita3K window at every "shot=NAME" of
 # the script into $OUT/NAME.png and stops at "quit" (or the timeout).
 #
+# It runs its own Vita3K instance on its own file system (build-vita3k-qa: the
+# firmware copied once from the normal one, the app installed from the build every
+# run), so it never touches the normal Vita3K installation and can run while
+# someone plays there.
+#
 # usage: tools/qa_vita3k.sh "<script>" [out dir]
 #   e.g. tools/qa_vita3k.sh "3000:mx+2000,4000:my+400,6000:shot=floor,7000:quit"
 # env:   BUILD   Vita build directory (default build-vita)
 #        SCENE   start scene (default SinglePlayer\C01A\FF-C01A_MAIN.gms)
 #        MHZ     emulated CPU clock (default 444; the timing then resembles hardware's)
+#        CFG     contents of ux0:data/ff/ff.cfg for the run (default none)
 #        VITA3K  Vita3K binary (default the local source build)
 #        TIMEOUT seconds (default 300)
-# The installed eboot and ux0:data/ff/pc are put back afterwards; only the Vita3K
-# instance started here ("Vita3K -r FFRD00001") is stopped.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 SCRIPT=${1:?usage: tools/qa_vita3k.sh "<script>" [out dir]}
@@ -22,21 +26,38 @@ BUILD=${BUILD:-$ROOT/build-vita}
 SCENE=${SCENE:-'SinglePlayer\C01A\FF-C01A_MAIN.gms'}
 VITA3K=${VITA3K:-$HOME/Documents/workspace/games/Vita3K/build/macos-ninja/bin/Release/Vita3K.app/Contents/MacOS/Vita3K}
 TIMEOUT=${TIMEOUT:-300}
-UX0="$HOME/Library/Application Support/Vita3K/Vita3K/fs/ux0"
-APP="$UX0/app/FFRD00001"
-DATA="$UX0/data/ff"
+MAIN="$HOME/Library/Application Support/Vita3K/Vita3K"
+HOME_QA="$ROOT/build-vita3k-qa"
+FS="$HOME_QA/fs"
+CONF="$HOME_QA/config.yml"
+APP="$FS/ux0/app/FFRD00001"
+DATA="$FS/ux0/data/ff"
 QA="$ROOT/gamedata/qa"
 LOG=${TMPDIR:-/tmp}/ff_qa_vita3k.log
+MATCH="$CONF"   # in this instance's command line only
 
 [ -f "$BUILD/ff.vpk" ] || { echo "no $BUILD/ff.vpk; build first" >&2; exit 1; }
 [ -x "$VITA3K" ] || { echo "no Vita3K at $VITA3K" >&2; exit 1; }
-[ -d "$APP" ] || { echo "FFRD00001 is not installed in Vita3K (tools/install_vita3k.sh)" >&2; exit 1; }
-if pgrep -f "Vita3K -r FFRD00001" > /dev/null; then
-    echo "a Vita3K instance running FFRD00001 already exists; close it first" >&2
+if pgrep -f "$MATCH" > /dev/null; then
+    echo "a QA Vita3K instance is already running" >&2
     exit 1
 fi
 
-# The test copy of the game directory: links to gamedata/pc, its own Freedom.ini.
+# The QA file system: the firmware partitions from the normal one, once.
+if [ ! -d "$FS/vs0" ]; then
+    mkdir -p "$FS"
+    for p in os0 vs0 vd0 ur0 sa0 pd0 tm0 ud0 gro0 grw0 imc0 xmc0 uma0 sd0 host0; do
+        if [ -d "$MAIN/fs/$p" ]; then cp -R "$MAIN/fs/$p" "$FS/$p"; else mkdir -p "$FS/$p"; fi
+    done
+    mkdir -p "$FS/ux0/app" "$FS/ux0/data" "$FS/ux0/user"
+    [ -d "$MAIN/fs/ux0/user" ] && cp -R "$MAIN/fs/ux0/user/." "$FS/ux0/user/"
+fi
+sed "s|^pref-path:.*|pref-path: $FS|" "$MAIN/config.yml" > "$CONF"
+
+# The app from this build, and the test copy of the game directory.
+rm -rf "$APP"
+mkdir -p "$APP" "$DATA"
+(cd "$APP" && unzip -q -o "$BUILD/ff.vpk") || exit 1
 rm -rf "$QA"
 mkdir -p "$QA"
 for f in "$ROOT"/gamedata/pc/*; do
@@ -46,41 +67,35 @@ done
 # (backslashes doubled: sed would read \C, \F... as escapes)
 SCENE_SED=$(printf '%s' "$SCENE" | sed 's/\\/\\\\/g')
 sed "s|^DefaultScene=.*|DefaultScene=$SCENE_SED|" "$ROOT/gamedata/pc/Freedom.ini" > "$QA/Freedom.ini"
-
-SAVED_EBOOT=${TMPDIR:-/tmp}/ff_qa_saved_eboot.$$
-cp "$APP/eboot.bin" "$SAVED_EBOOT"
-unzip -p "$BUILD/ff.vpk" eboot.bin > "$APP/eboot.bin" || exit 1
-SAVED_PC=$(readlink "$DATA/pc")
 ln -sfn "$QA" "$DATA/pc"
 printf '%s' "$SCRIPT" > "$DATA/input.txt"
-rm -f "$DATA/shot_now.txt" "$DATA/ff.log" "$DATA/profile.txt"
+rm -f "$DATA/shot_now.txt" "$DATA/ff.log" "$DATA/profile.txt" "$DATA/ff.cfg"
+if [ -n "${CFG:-}" ]; then printf '%s\n' "$CFG" > "$DATA/ff.cfg"; fi
 mkdir -p "$OUT"
 touch "$OUT"
 
 stop() {
-    pkill -9 -f "Vita3K -r FFRD00001" 2>/dev/null
+    pkill -9 -f "$MATCH" 2>/dev/null
     rm -f "$DATA/input.txt" "$DATA/shot_now.txt"
-    ln -sfn "$SAVED_PC" "$DATA/pc"
-    mv -f "$SAVED_EBOOT" "$APP/eboot.bin"
 }
 trap 'stop; exit 1' INT TERM
 
 WINID_BIN=${TMPDIR:-/tmp}/ff_window_id
 [ "$WINID_BIN" -nt "$ROOT/tools/window_id.swift" ] || swiftc -O "$ROOT/tools/window_id.swift" -o "$WINID_BIN" || exit 1
 
-(VITA3K_CPU_MHZ=${MHZ:-444} "$VITA3K" -r FFRD00001 > "$LOG" 2>&1 &)
+(VITA3K_CPU_MHZ=${MHZ:-444} "$VITA3K" -c "$CONF" -w -r FFRD00001 > "$LOG" 2>&1 &)
 started=0
-while [ $started -lt 30 ] && ! pgrep -f "Vita3K -r FFRD00001" > /dev/null; do
+while [ $started -lt 30 ] && ! pgrep -f "$MATCH" > /dev/null; do
     sleep 1
     started=$((started + 1))
 done
 shots=0
 waited=0
-while [ $waited -lt $((TIMEOUT * 2)) ] && pgrep -f "Vita3K -r FFRD00001" > /dev/null; do
+while [ $waited -lt $((TIMEOUT * 2)) ] && pgrep -f "$MATCH" > /dev/null; do
     if [ -s "$DATA/shot_now.txt" ]; then
         name=$(cat "$DATA/shot_now.txt")
         rm -f "$DATA/shot_now.txt"
-        pid=$(pgrep -f "Vita3K -r FFRD00001" | head -n 1)
+        pid=$(pgrep -f "$MATCH" | head -n 1)
         win=$("$WINID_BIN" "$pid" "(FFRD00001)" | head -n 1)
         if [ -n "$win" ] && screencapture -x -o -l "$win" "$OUT/$name.png"; then
             shots=$((shots + 1))
