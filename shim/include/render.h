@@ -80,6 +80,8 @@ typedef struct GuestVerts {
     uint32_t nrm_off, col_off, spec_off, uv_off[MAX_STAGES], uv_bytes[MAX_STAGES];
     int pretransformed;         /* x, y, z, rhw screen-space positions */
     int has_normal, has_color, has_spec, ntex;
+    int has_bounds;             /* lo/hi: bounds of the positions (spares the near-plane scan) */
+    float lo[3], hi[3];
 } GuestVerts;
 /* Packs straight from guest memory into the draw batch (no RVertex step).
  * Returns 0 when the draw needs the general path (near-plane clipping, big

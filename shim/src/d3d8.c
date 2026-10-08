@@ -48,6 +48,7 @@ typedef struct Buffer8 {
     uint32_t fvf_or_fmt, usage, pool;
     int index;               /* index buffer */
     uint64_t last_mark;      /* render queue mark after the last draw recorded with it */
+    uint32_t gen;            /* counts writable Locks (cached vertex bounds go stale) */
 } Buffer8;
 
 static uint32_t d3d_vtbl, dev_vtbl, tex_vtbl, surf_vtbl, vb_vtbl, ib_vtbl;
@@ -432,6 +433,48 @@ typedef struct Decoded {
 static RVertex *vbuf;
 static uint32_t vbuf_cap;
 
+/* The layout of an FVF's vertices for render_draw_guest (packs straight from the
+ * game's buffer, without decode's RVertex pass): the same fields decode reads. */
+static void guest_verts_of(uint32_t fvf, const uint8_t *base, uint32_t stride, GuestVerts *g)
+{
+    /* Field by field: a memset here is a library call per draw on the Vita. */
+    g->src = NULL;
+    g->has_bounds = 0;
+    for (int t = 0; t < MAX_STAGES; t++)
+        g->uv_off[t] = g->uv_bytes[t] = 0;
+    uint32_t pos = fvf & 0x0Eu;
+    g->base = base;
+    g->stride = stride;
+    g->pretransformed = pos == 0x4u;
+    g->has_normal = (fvf & 0x10u) != 0;
+    g->has_color = (fvf & 0x40u) != 0;
+    g->has_spec = (fvf & 0x80u) != 0;
+    g->ntex = (int)((fvf >> 8) & 0xFu);
+    uint32_t o = pos == 0x4u ? 16u : pos == 0x2u ? 12u : 12u + ((pos - 0x4u) / 2u) * 4u;
+    g->nrm_off = o;
+    if (g->has_normal)
+        o += 12;
+    if (fvf & 0x20u)
+        o += 4;
+    g->col_off = o;
+    if (g->has_color)
+        o += 4;
+    g->spec_off = o;
+    if (g->has_spec)
+        o += 4;
+    for (int t = 0; t < g->ntex; t++) {
+        uint32_t f = (fvf >> (16 + t * 2)) & 3u;
+        uint32_t sz = f == 0 ? 8u : f == 1 ? 12u : f == 2 ? 16u : 4u;
+        if (t < MAX_STAGES) {
+            g->uv_off[t] = o;
+            g->uv_bytes[t] = sz >= 8u ? 8u : 4u;
+        }
+        o += sz;
+    }
+    if (g->ntex > MAX_STAGES)
+        g->ntex = MAX_STAGES;
+}
+
 /* Decodes `count` consecutive vertices at vb (stride bytes apart). */
 static RVertex *decode(uint32_t fvf, const uint8_t *vb, uint32_t stride, uint32_t count, Decoded *d)
 {
@@ -630,7 +673,62 @@ typedef struct PkBufDraw {
     uint8_t diag, trace, wide;
     const uint8_t *verts;
     const uint8_t *idx_src;
+    uint32_t vaddr, gen;     /* guest address of the vertices and the buffer's version */
 } PkBufDraw;
+
+/* Render thread: bounds of the positions of the vertex ranges drawn, per buffer
+ * version (static geometry is drawn every frame from unchanged buffers), so the
+ * near-plane test only checks a box's corners. */
+typedef struct BoundsEntry {
+    uint32_t vaddr, nv, stride, gen;
+    float lo[3], hi[3];
+} BoundsEntry;
+#define BOUNDS_SLOTS 4096u
+static BoundsEntry bounds_cache[BOUNDS_SLOTS];
+
+
+static void vertex_bounds(const PkBufDraw *c, GuestVerts *g)
+{
+    uint32_t h = (c->vaddr * 0x9E3779B1u ^ c->nv * 0x85EBCA6Bu ^ c->gen) >> 20;
+    BoundsEntry *e = &bounds_cache[h & (BOUNDS_SLOTS - 1u)];
+    if (e->vaddr != c->vaddr || e->nv != c->nv || e->stride != c->stride || e->gen != c->gen || !e->vaddr) {
+#if defined(FF_PROFILE)
+        rt_prof_render = PROF_H_NEARCLIP;
+#endif
+        float lo[3] = { 1e30f, 1e30f, 1e30f }, hi[3] = { -1e30f, -1e30f, -1e30f };
+        const uint8_t *p = c->verts;
+        for (uint32_t i = 0; i < c->nv; i++, p += c->stride) {
+            float v[3];
+            memcpy(v, p, 12);
+            for (int k = 0; k < 3; k++) {
+                lo[k] = v[k] < lo[k] ? v[k] : lo[k];
+                hi[k] = v[k] > hi[k] ? v[k] : hi[k];
+            }
+        }
+        /* NaN positions never make a valid box: those draws keep the full scan. */
+        if (!(lo[0] <= hi[0] && lo[1] <= hi[1] && lo[2] <= hi[2]))
+            return;
+        e->vaddr = c->vaddr;
+        e->nv = c->nv;
+        e->stride = c->stride;
+        e->gen = c->gen;
+        for (int k = 0; k < 3; k++) {
+            e->lo[k] = lo[k];
+            e->hi[k] = hi[k];
+        }
+#if defined(FF_PROFILE)
+        rt_prof_render = PROF_H_RUN;
+#endif
+    } else {
+        bounds_hits++;
+    }
+
+    g->has_bounds = 1;
+    for (int k = 0; k < 3; k++) {
+        g->lo[k] = e->lo[k];
+        g->hi[k] = e->hi[k];
+    }
+}
 
 static void pk_exec_buf(const void *p)
 {
@@ -638,6 +736,9 @@ static void pk_exec_buf(const void *p)
     static uint16_t *rib;
     static uint32_t rib_cap;
     render_pk_draw_begin(c->diag, c->trace);
+#if defined(FF_PROFILE)
+    rt_prof_render = PROF_H_INDEX;
+#endif
     const uint16_t *idx = NULL;
     if (c->idx_src && c->ni) {
         if (c->ni > rib_cap) {
@@ -661,8 +762,29 @@ static void pk_exec_buf(const void *p)
         }
         idx = rib;
     }
+#if defined(FF_PROFILE)
+    rt_prof_render = PROF_H_RUN;
+#endif
+    /* Straight from the game's buffer when the batcher takes it; decoded otherwise
+     * (near-plane clipping, big or non-triangle draws, diagnostics). */
+    GuestVerts g;
+    guest_verts_of(c->fvf, c->verts, c->stride, &g);
+    if ((c->fvf & 0x0Eu) != 0x4u && c->vaddr)   /* not pre-transformed, not a dynamic buffer */
+        vertex_bounds(c, &g);
+    int done = render_draw_guest((int)c->prim, &g, c->nv, idx, idx ? c->ni : 0u);
+#if defined(FF_PROFILE)
+    rt_prof_render = PROF_H_RUN;
+#endif
+    if (done)
+        return;
     Decoded d;
+#if defined(FF_PROFILE)
+    rt_prof_render = PROF_H_DECODE;
+#endif
     RVertex *v = decode(c->fvf, c->verts, c->stride, c->nv, &d);
+#if defined(FF_PROFILE)
+    rt_prof_render = PROF_H_RUN;
+#endif
     render_draw((int)c->prim, v, c->nv, idx, idx ? c->ni : 0u, d.pretransformed, d.has_normal, d.has_color,
                 d.has_spec, d.ntex);
 }
@@ -702,6 +824,8 @@ static int pk_record_buffers(uint32_t prim, Buffer8 *vb, uint32_t voff, uint32_t
     c->trace = g_trace_next_frame == 2;
     c->verts = g_mem + vb->mem + voff;
     c->idx_src = ib ? g_mem + ib->mem + ioff : NULL;
+    c->vaddr = (vb->usage & 0x200u) ? 0u : vb->mem + voff;   /* DYNAMIC: rewritten every frame, no cache */
+    c->gen = vb->gen;
     rq_end_fast();
     render_pk_recorded();
     uint64_t mark = rq_mark();
@@ -2178,6 +2302,8 @@ static void buf_Lock(Ctx *c)
         return;
     }
     uint32_t fl = ARG(4);
+    if (!(fl & 0x10u))   /* not READONLY */
+        b->gen++;
     if (g_pack_thread && !(fl & 0x1010u) && b->last_mark && !rq_passed(b->last_mark)) {
         uint32_t nm = heap_alloc(b->size ? b->size : 4u);
         if (nm) {

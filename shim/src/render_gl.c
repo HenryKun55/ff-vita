@@ -150,14 +150,18 @@ static uint32_t cur_serial(void)
 /* The sampling profiler's section markers belong to the game thread: the front
  * end only sets them when it runs there. */
 #if defined(FF_PROFILE)
-#define PROF_RS(id)                          \
-    const uint32_t prof_hprev = rt_prof_cur; \
-    if (!g_pack_thread)                      \
-    rt_prof_cur = (id)
-#define PROF_RS_END                  \
-    do {                             \
-        if (!g_pack_thread)          \
-            rt_prof_cur = prof_hprev; \
+#define PROF_RS(id)                                                     \
+    const uint32_t prof_hprev = g_pack_thread ? rt_prof_render : rt_prof_cur; \
+    if (!g_pack_thread)                                                 \
+        rt_prof_cur = (id);                                             \
+    else                                                                \
+        rt_prof_render = (id)
+#define PROF_RS_END                      \
+    do {                                 \
+        if (!g_pack_thread)              \
+            rt_prof_cur = prof_hprev;    \
+        else                             \
+            rt_prof_render = prof_hprev; \
     } while (0)
 #else
 #define PROF_RS(id) ((void)0)
@@ -363,7 +367,7 @@ extern uint32_t vgl_prof_base __attribute__((weak));
 #if defined(__vita__) && defined(FF_PROFILE)
 /* vitaGL's phase markers while it runs on the render thread (not sampled): they
  * must not land in the game thread's rt_prof_cur. */
-static volatile uint32_t render_thread_prof;
+#define render_thread_prof rt_prof_render
 #endif
 
 /* The pack thread is on with the render thread unless pack_thread=0 (ff.cfg) or
@@ -2774,7 +2778,14 @@ int render_draw_guest(int prim, const GuestVerts *g, uint32_t nv, const uint16_t
         PROF_RS(PROF_H_NEARCLIP);
         const float *m = clip_z_column();
         int behind = 0;
-        for (uint32_t i = 0; i < nv; i++) {
+        /* Every corner of the vertices' bounds in front: so is every vertex. */
+        int all_front = g->has_bounds;
+        for (int k = 0; k < 8 && all_front; k++) {
+            float x = (k & 1) ? g->hi[0] : g->lo[0], y = (k & 2) ? g->hi[1] : g->lo[1];
+            float z = (k & 4) ? g->hi[2] : g->lo[2];
+            all_front = x * m[0] + y * m[1] + z * m[2] + m[3] >= 0.0f;
+        }
+        for (uint32_t i = 0; i < nv && !all_front; i++) {
             float x[3];
             memcpy(x, g->base + (size_t)(g->src ? g->src[i] : i) * g->stride, 12);
             behind |= x[0] * m[0] + x[1] * m[1] + x[2] * m[2] + m[3] < 0.0f;

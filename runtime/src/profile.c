@@ -34,6 +34,7 @@ typedef int profile_translation_unit_is_not_empty;
 #endif
 
 RtProf rt_prof_main;
+volatile uint32_t rt_prof_render;
 
 #define SAMPLE_US 1000u
 #define DUMP_EVERY 10000u        /* samples */
@@ -52,7 +53,7 @@ typedef struct Map {
     uint32_t n;
 } Map;
 
-static Map excl, incl, pairs, edges;
+static Map excl, incl, pairs, edges, render_excl;
 static uint32_t total;
 static volatile int reset_requested, stopped;
 
@@ -123,6 +124,7 @@ static void count(uint32_t cur, const uint32_t *stack, uint32_t depth)
 
 static void sample(void)
 {
+    map_add(&render_excl, rt_prof_render ? rt_prof_render : PROF_H_RUN);
     uint32_t cur = rt_prof_cur;
     uint32_t depth = rt_prof_main.depth;
     if (depth > RT_PROF_MAX)
@@ -170,7 +172,9 @@ static const char *name_of(uint32_t id, char *buf, size_t n)
         }
     static const char *const host[] = { "?", "decode", "near clip", "pack", "batch", "gl state", "gl draw",
                                         "texture", "blit", "audio mix", "index scan", "fill (render target)",
-                                        "fill (memory surface)", "blit (memory surface)" };
+                                        "fill (memory surface)", "blit (memory surface)",
+                                        "render thread idle (waiting for the game thread)",
+                                        "render thread swap (vsync, GPU)", "render thread other commands" };
     if ((id & 0xFFFFFF00u) == 0xFD000000u && (id & 0xFFu) < sizeof(host) / sizeof(host[0])) {
         snprintf(buf, n, "host %s", host[id & 0xFFu]);
         return buf;
@@ -230,6 +234,7 @@ static void dump(void)
     if (per_frame)
         fprintf(f, "Per-frame mode: samples of %u of %u frames kept\n", frames_kept, frames_seen);
     dump_map(f, &excl, "Exclusive (code running when sampled; imports as dll!name, COM/callbacks as thunk):", 0, TOP);
+    dump_map(f, &render_excl, "Render thread (same samples; vgl = inside vitaGL):", 0, TOP);
     dump_map(f, &incl, "Inclusive (guest functions on the shadow call stack):", 0, TOP);
     dump_map(f, &pairs, "Current code <- calling guest function:", 1, TOP);
     dump_map(f, &edges, "Call edges, inclusive (callee <- caller):", 1, TOP * 4u);
@@ -251,6 +256,7 @@ static void sampler_loop(void)
             memset(&incl, 0, sizeof(incl));
             memset(&pairs, 0, sizeof(pairs));
             memset(&edges, 0, sizeof(edges));
+            memset(&render_excl, 0, sizeof(render_excl));
             total = 0;
             n_pend = 0;
             frames_kept = frames_seen = 0;

@@ -552,7 +552,9 @@ void rt_prof_flush(void);
 /* Host sections inside a thunk (ids 0xFD0000xx, named in profile.c). */
 enum { PROF_H_DECODE = 0xFD000001u, PROF_H_NEARCLIP, PROF_H_PACK, PROF_H_BATCH, PROF_H_STATE, PROF_H_GLDRAW,
        PROF_H_TEXTURE, PROF_H_BLIT, PROF_H_MIX, PROF_H_INDEX, PROF_H_FILL, PROF_H_SOFTFILL,
-       PROF_H_SOFTBLIT };
+       PROF_H_SOFTBLIT, PROF_H_RIDLE, PROF_H_RSWAP, PROF_H_RUN };
+/* What the render thread is doing (sampled with the main thread, listed apart). */
+extern volatile uint32_t rt_prof_render;
 /* Phases inside vitaGL's draw calls (private vitaGL built with PROF_HOOKS=1). */
 #define PROF_H_VGL 0xFD000020u
 #define PROF_SECTION(id) const uint32_t prof_hprev = rt_prof_cur; rt_prof_cur = (id)

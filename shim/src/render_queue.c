@@ -284,11 +284,17 @@ static void render_loop(void)
         if (done == pub) {
             atomic_store(&done_cmds, done);
             notify_game();
+#if defined(FF_PROFILE)
+            rt_prof_render = PROF_H_RIDLE;
+#endif
             atomic_store(&render_idle, 1);
             if (atomic_load(&pub_cmds) == done)
                 sema_wait(&render_sema);
             else
                 atomic_store(&render_idle, 0);
+#if defined(FF_PROFILE)
+            rt_prof_render = PROF_H_RUN;
+#endif
             continue;
         }
         uint64_t t0 = thread_clock_us();
@@ -415,7 +421,13 @@ void rq_start(void)
 static void cmd_swap(const void *a)
 {
     (void)a;
+#if defined(FF_PROFILE)
+    rt_prof_render = PROF_H_RSWAP;
+#endif
     platform_swap();
+#if defined(FF_PROFILE)
+    rt_prof_render = PROF_H_RUN;
+#endif
 }
 
 uint64_t rq_swap_end_frame(void)
