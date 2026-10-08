@@ -108,13 +108,13 @@ static uint64_t thunk_run(Ctx *c, uint32_t i)
     if (log_calls_at >= 0.0)
         log_call(i);
 #ifdef FF_PROFILE
-    uint32_t prof_prev = rt_prof_cur;
-    rt_prof_cur = target;
+    uint32_t prof_prev = c->prof->cur;
+    c->prof->cur = target;
 #endif
     g_current_thunk = target;
     thunk_fns[i](c);
 #ifdef FF_PROFILE
-    rt_prof_cur = prof_prev;
+    c->prof->cur = prof_prev;
 #endif
     return ((uint64_t)c->r[4] << 32) | c->r[0];
 }
@@ -356,6 +356,9 @@ int main(int argc, char **argv)
     rt_prof_start();
 #endif
     Ctx *c = &g_ctx;
+#ifdef FF_PROFILE
+    c->prof = &rt_prof_main;
+#endif
     rt_fninit(c);
     thread_setup_tib(c, GUEST_STACK_BASE, GUEST_STACK_BASE + GUEST_STACK_SIZE);
     c->r[4] = GUEST_STACK_BASE + GUEST_STACK_SIZE - 64u;

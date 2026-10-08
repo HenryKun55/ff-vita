@@ -33,9 +33,7 @@ typedef int profile_translation_unit_is_not_empty;
 #define PROFILE_PATH "ff_profile.txt"
 #endif
 
-volatile uint32_t rt_prof_cur;
-volatile uint32_t rt_prof_depth;
-volatile uint32_t rt_prof_stack[RT_PROF_MAX];
+RtProf rt_prof_main;
 
 #define SAMPLE_US 1000u
 #define DUMP_EVERY 10000u        /* samples */
@@ -126,13 +124,13 @@ static void count(uint32_t cur, const uint32_t *stack, uint32_t depth)
 static void sample(void)
 {
     uint32_t cur = rt_prof_cur;
-    uint32_t depth = rt_prof_depth;
+    uint32_t depth = rt_prof_main.depth;
     if (depth > RT_PROF_MAX)
         depth = RT_PROF_MAX;
     if (!per_frame) {
         uint32_t stack[RT_PROF_MAX];
         for (uint32_t i = 0; i < depth; i++)
-            stack[i] = rt_prof_stack[i];
+            stack[i] = rt_prof_main.stack[i];
         count(cur, stack, depth);
         return;
     }
@@ -156,7 +154,7 @@ static void sample(void)
     p->cur = cur;
     p->depth = depth < PEND_DEPTH ? depth : PEND_DEPTH;
     for (uint32_t i = 0; i < p->depth; i++)
-        p->stack[i] = rt_prof_stack[i];
+        p->stack[i] = rt_prof_main.stack[i];
 }
 
 static const char *name_of(uint32_t id, char *buf, size_t n)

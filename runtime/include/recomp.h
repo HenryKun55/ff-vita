@@ -25,6 +25,7 @@ typedef struct Ctx {
     uint32_t ftop;
     uint32_t fcw;
     uint32_t fsw;           /* condition codes C0-C3 and exception bits; TOP is composed on read */
+    struct RtProf *prof;    /* profiler state of this guest thread (FF_PROFILE builds) */
 } Ctx;
 
 typedef void (*GuestFn)(Ctx *c);
@@ -502,22 +503,30 @@ uint64_t rt_rdtsc(void);
  * Without it every hook compiles to nothing. */
 #ifdef FF_PROFILE
 #define RT_PROF_MAX 256u
-extern volatile uint32_t rt_prof_cur;
-extern volatile uint32_t rt_prof_depth;
-extern volatile uint32_t rt_prof_stack[RT_PROF_MAX];
+/* Per guest thread (Ctx.prof): the sampler reads the main thread's, rt_prof_main;
+ * the other guest threads (sound, file loading) keep their own, not sampled. */
+typedef struct RtProf {
+    volatile uint32_t cur;
+    volatile uint32_t depth;
+    volatile uint32_t stack[RT_PROF_MAX];
+} RtProf;
+extern RtProf rt_prof_main;
+/* Host code without a guest context (the renderer's sections) bills the main thread. */
+#define rt_prof_cur (rt_prof_main.cur)
 #define PROF_ENTER(a)                                                   \
-    const uint32_t prof_pd = rt_prof_depth, prof_prev = rt_prof_cur;    \
+    RtProf *const prof_p = c->prof;                                     \
+    const uint32_t prof_pd = prof_p->depth, prof_prev = prof_p->cur;    \
     if (prof_pd < RT_PROF_MAX)                                          \
-        rt_prof_stack[prof_pd] = (a);                                   \
-    rt_prof_depth = prof_pd + 1u;                                       \
-    rt_prof_cur = (a);                                                  \
+        prof_p->stack[prof_pd] = (a);                                   \
+    prof_p->depth = prof_pd + 1u;                                       \
+    prof_p->cur = (a);                                                  \
     (void)prof_pd;                                                      \
     (void)prof_prev
-#define PROF_EXIT (rt_prof_depth = prof_pd, rt_prof_cur = prof_prev)
-#define PROF_HOST(id) (rt_prof_cur = (id))
-#define PROF_BACK(a) (rt_prof_cur = (a))
+#define PROF_EXIT (prof_p->depth = prof_pd, prof_p->cur = prof_prev)
+#define PROF_HOST(id) (prof_p->cur = (id))
+#define PROF_BACK(a) (prof_p->cur = (a))
 /* A setjmp returning through longjmp: this function is current again. */
-#define PROF_REENTER(a) (rt_prof_depth = prof_pd + 1u, rt_prof_cur = (a))
+#define PROF_REENTER(a) (prof_p->depth = prof_pd + 1u, prof_p->cur = (a))
 void rt_prof_start(void);
 /* Drop the samples taken so far (e.g. boot and menus before a benchmark). With
  * per_frame set, samples are then kept per frame until rt_prof_frame_end decides. */

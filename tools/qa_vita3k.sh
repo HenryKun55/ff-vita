@@ -53,8 +53,9 @@ unzip -p "$BUILD/ff.vpk" eboot.bin > "$APP/eboot.bin" || exit 1
 SAVED_PC=$(readlink "$DATA/pc")
 ln -sfn "$QA" "$DATA/pc"
 printf '%s' "$SCRIPT" > "$DATA/input.txt"
-rm -f "$DATA/shot_now.txt" "$DATA/ff.log"
+rm -f "$DATA/shot_now.txt" "$DATA/ff.log" "$DATA/profile.txt"
 mkdir -p "$OUT"
+touch "$OUT"
 
 stop() {
     pkill -9 -f "Vita3K -r FFRD00001" 2>/dev/null
@@ -96,4 +97,9 @@ while [ $waited -lt $((TIMEOUT * 2)) ] && pgrep -f "Vita3K -r FFRD00001" > /dev/
     waited=$((waited + 1))
 done
 stop
-echo "$shots screenshot(s) in $OUT; log: ux0:data/ff/ff.log"
+if [ -s "$DATA/profile.txt" ] && [ "$DATA/profile.txt" -nt "$OUT" ]; then
+    cp "$DATA/profile.txt" "$OUT/profile.txt"
+    echo "profile: $OUT/profile.txt"
+fi
+cp "$DATA/ff.log" "$OUT/ff.log" 2>/dev/null
+echo "$shots screenshot(s) in $OUT; log: $OUT/ff.log"

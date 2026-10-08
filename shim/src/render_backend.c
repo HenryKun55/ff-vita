@@ -1056,9 +1056,19 @@ static void apply_states_now(const DrawCmd *d)
     /* D3DRS_ZBIAS (0..16): coplanar decals (shadows, light, dirt) drawn over a
      * surface win the depth test. One ZBIAS step is 5e-6 of the depth range (as
      * Wine's d3d8 maps it), about 84 units of a 24-bit depth buffer. */
-    if (d->zbias && !pretransformed) {
+    /* Draws that test with LESSEQUAL or EQUAL and either blend without writing
+     * depth or cut out with the alpha test are decals laid over a surface (the
+     * floor's window light, shadows, rugs, stains): at least one step, since their
+     * own vertices do not land on exactly the surface's depths. */
+    int zb = (int)d->zbias;
+    if (!zb && d->zenable && (d->zfunc == 4u || d->zfunc == 3u) &&
+        ((d->blend && !d->zwrite) || (d->alphatest && d->alpharef)))
+        zb = 1;
+    if (zb && !pretransformed) {
         glEnable(GL_POLYGON_OFFSET_FILL);
-        glPolygonOffset(0.0f, -zbias_units((int)d->zbias));
+        /* Slope-scaled too: at grazing angles (a floor seen from low) a constant
+         * offset is less than the depth change across a pixel. */
+        glPolygonOffset(-1.0f, -zbias_units(zb));
     } else {
         glDisable(GL_POLYGON_OFFSET_FILL);
     }
@@ -1343,8 +1353,10 @@ void bk_draw(const void *cmd)
     uint64_t t1 = bk_now();
     t_state_us += t1 - t0;
 
+#ifdef FF_PROFILE
     if (!rq_on)
-        PROF_HOST(PROF_H_GLDRAW);
+        rt_prof_cur = PROF_H_GLDRAW;   /* single thread: the game thread is billed */
+#endif
     /* The index range is known: glDrawRangeElements spares vitaGL a scan of the
      * indices for the highest one before copying the vertex arrays. */
     if (A->ibo) {

@@ -364,14 +364,14 @@ void rt_dispatch(Ctx *c, uint32_t target)
         fn = thunk_lookup(target);
         if (fn) {
 #ifdef FF_PROFILE
-            uint32_t prof_prev = rt_prof_cur;
-            rt_prof_cur = target;
+            uint32_t prof_prev = c->prof->cur;
+            c->prof->cur = target;
 #endif
             g_current_thunk = target;
             rt_log_thunk_call(target);
             fn(c);
 #ifdef FF_PROFILE
-            rt_prof_cur = prof_prev;
+            c->prof->cur = prof_prev;
 #endif
             return;
         }

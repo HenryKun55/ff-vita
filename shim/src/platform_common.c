@@ -62,7 +62,8 @@ void platform_key(uint8_t dik, int down)
  * way the Vita's pad does (shim/src/pad_input.c), "key+K"/"key-K" hold/release DIK
  * code K (hex), "diag=N" renderer diagnostic mode N, "shot=NAME" a screenshot of
  * the next frame named NAME (Vita: captured from the Vita3K window by
- * tools/qa_vita3k.sh), "quit" end the process. */
+ * tools/qa_vita3k.sh), "profreset" restart the profile (FF_PROFILE builds),
+ * "quit" end the process (the profile written first). */
 void platform_scripted_input(void)
 {
     static const char *script;
@@ -127,13 +128,21 @@ void platform_scripted_input(void)
         char buf[32];
         snprintf(buf, sizeof(buf), "%.*s", (int)n, act);
         rt_log("[input] t=%lu %s", at, buf);
-        if (!strncmp(buf, "diag=", 5) || !strncmp(buf, "shot=", 5) || !strcmp(buf, "quit")) {
-            if (buf[0] == 'd')
+        if (!strncmp(buf, "diag=", 5) || !strncmp(buf, "shot=", 5) || !strcmp(buf, "quit") ||
+            !strcmp(buf, "profreset")) {
+            if (buf[0] == 'p') {
+#ifdef FF_PROFILE
+                rt_prof_reset(0);   /* measure from here (after loading) */
+#endif
+            } else if (buf[0] == 'd')
                 render_diag_set(atoi(buf + 5));
             else if (buf[0] == 's')
                 render_shot_request(buf + 5);
             else {
                 rt_log("[input] quit");
+#ifdef FF_PROFILE
+                rt_prof_flush();
+#endif
                 platform_shutdown();
                 exit(0);
             }

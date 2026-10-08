@@ -10,6 +10,7 @@
 #include "platform.h"
 #include "render.h"
 
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -38,10 +39,15 @@ typedef struct Texture8 {
     Surface *lv[MAX_LEVELS];
 } Texture8;
 
+/* Vertex and index buffers live in guest memory. With the pack thread, recorded
+ * draws read them there later: a Lock with DISCARD (or a plain one) of a buffer
+ * a recorded draw may still read gives it new memory instead (buffer renaming,
+ * as drivers do); the old block is freed once the render thread is past it. */
 typedef struct Buffer8 {
     uint32_t mem, size;
     uint32_t fvf_or_fmt, usage, pool;
     int index;               /* index buffer */
+    uint64_t last_mark;      /* render queue mark after the last draw recorded with it */
 } Buffer8;
 
 static uint32_t d3d_vtbl, dev_vtbl, tex_vtbl, surf_vtbl, vb_vtbl, ib_vtbl;
@@ -574,6 +580,138 @@ static void pk_record(uint32_t prim, uint32_t va, uint32_t stride, uint32_t nv, 
     render_pk_recorded();
 }
 
+static uint16_t *read_indices(uint32_t addr, uint32_t n, int wide, uint32_t min);
+
+/* Guest blocks of renamed buffers, freed once the render thread passed `mark`. */
+#define MAX_RETIRED 256u
+static struct {
+    uint32_t mem;
+    uint64_t mark;
+} retired[MAX_RETIRED];
+static uint32_t n_retired;
+
+static void retired_collect(void)
+{
+    uint32_t k = 0;
+    for (uint32_t i = 0; i < n_retired; i++) {
+        if (rq_passed(retired[i].mark))
+            heap_free(retired[i].mem);
+        else
+            retired[k++] = retired[i];
+    }
+    n_retired = k;
+}
+
+/* Frees `mem` of a buffer whose last recorded draw is `mark`, now or later. */
+static void retire(uint32_t mem, uint64_t mark)
+{
+    if (!g_pack_thread || rq_passed(mark)) {
+        heap_free(mem);
+        return;
+    }
+    if (n_retired == MAX_RETIRED) {
+        rq_sync();
+        retired_collect();
+    }
+    retired[n_retired].mem = mem;
+    retired[n_retired].mark = mark;
+    n_retired++;
+}
+
+/* Draw path counts, logged every 600 frames (pack thread): draws read in place,
+ * fallbacks; renames of buffers in use. */
+static uint32_t st_inplace, st_other, st_renames;
+
+/* A recorded draw of buffer memory: vertices at verts, indices (or none) at
+ * idx_src, rebased by -min on the render thread. */
+typedef struct PkBufDraw {
+    uint32_t prim, fvf, stride, nv, ni, min;
+    uint8_t diag, trace, wide;
+    const uint8_t *verts;
+    const uint8_t *idx_src;
+} PkBufDraw;
+
+static void pk_exec_buf(const void *p)
+{
+    const PkBufDraw *c = p;
+    static uint16_t *rib;
+    static uint32_t rib_cap;
+    render_pk_draw_begin(c->diag, c->trace);
+    const uint16_t *idx = NULL;
+    if (c->idx_src && c->ni) {
+        if (c->ni > rib_cap) {
+            rib_cap = c->ni + 1024u;
+            rib = realloc(rib, rib_cap * sizeof(uint16_t));
+        }
+        const uint8_t *src = c->idx_src;
+        const uint32_t min = c->min;
+        if (c->wide) {
+            for (uint32_t i = 0; i < c->ni; i++) {
+                uint32_t v;
+                memcpy(&v, src + 4u * i, 4);
+                rib[i] = (uint16_t)(v - min);
+            }
+        } else {
+            for (uint32_t i = 0; i < c->ni; i++) {
+                uint16_t h;
+                memcpy(&h, src + 2u * i, 2);
+                rib[i] = (uint16_t)(h - min);
+            }
+        }
+        idx = rib;
+    }
+    Decoded d;
+    RVertex *v = decode(c->fvf, c->verts, c->stride, c->nv, &d);
+    render_draw((int)c->prim, v, c->nv, idx, idx ? c->ni : 0u, d.pretransformed, d.has_normal, d.has_color,
+                d.has_spec, d.ntex);
+}
+
+/* Records a draw of vertex buffer vb (byte offset voff) with index buffer ib
+ * (start index, NULL: not indexed), read in place by the render thread; 0 when
+ * the general path must be taken. */
+static int pk_record_buffers(uint32_t prim, Buffer8 *vb, uint32_t voff, uint32_t stride, uint32_t nv, Buffer8 *ib,
+                             uint32_t start, uint32_t ni, uint32_t min)
+{
+    if (!g_pack_thread || !nv || dev.fvf & 1u || offscreen() || voff + (uint64_t)nv * stride > vb->size) {
+        st_other++;
+        return 0;
+    }
+    int wide = ib && ib->fvf_or_fmt == FMT_INDEX32;
+    uint32_t ioff = ib ? start * (wide ? 4u : 2u) : 0u;
+    if (ib && ioff + (uint64_t)ni * (wide ? 4u : 2u) > ib->size) {
+        st_other++;
+        return 0;
+    }
+    uint32_t fvf = dev.fvf;
+    {
+        PROF_SECTION(PROF_H_STATE);
+        render_pk_prepare((fvf & 0x0Eu) == 0x4u, (fvf & 0x10u) != 0);
+        PROF_SECTION_END;
+    }
+    PROF_SECTION(PROF_H_BATCH);
+    PkBufDraw *c = rq_begin_fast(pk_exec_buf, sizeof(PkBufDraw));
+    c->prim = prim;
+    c->fvf = fvf;
+    c->stride = stride;
+    c->nv = nv;
+    c->ni = ib ? ni : 0u;
+    c->min = min;
+    c->wide = (uint8_t)wide;
+    c->diag = (uint8_t)render_diag_mode();
+    c->trace = g_trace_next_frame == 2;
+    c->verts = g_mem + vb->mem + voff;
+    c->idx_src = ib ? g_mem + ib->mem + ioff : NULL;
+    rq_end_fast();
+    render_pk_recorded();
+    uint64_t mark = rq_mark();
+    vb->last_mark = mark;
+    if (ib)
+        ib->last_mark = mark;
+    st_inplace++;
+    PROF_SECTION_END;
+    return 1;
+}
+
 static void draw_verts(uint32_t prim, uint32_t va, uint32_t stride, uint32_t nv, const uint16_t *idx, uint32_t ni)
 {
     if (!nv || dev.fvf & 1u || offscreen())
@@ -655,6 +793,13 @@ static void dev_Reset(Ctx *c)
 
 static void dev_Present(Ctx *c)
 {
+    static uint32_t frames;
+    if (++frames % 600u == 0u) {
+        rt_log("d3d8 draws (600 frames): read in place %u, other %u; buffers renamed %u", st_inplace, st_other,
+               st_renames);
+        st_inplace = st_other = st_renames = 0;
+    }
+    retired_collect();
     back_buffer();
     render_present();
     /* Clear clears only the viewport, so what is outside the game's viewport
@@ -1572,7 +1717,9 @@ static void dev_DrawPrimitive(Ctx *c)
     Buffer8 *vb = stream_buffer();
     if (vb) {
         uint32_t stride = dev.stream_stride ? dev.stream_stride : fvf_stride(dev.fvf);
-        draw_verts(prim, vb->mem + start * stride, stride, prim_vertices(prim, n), NULL, 0);
+        uint32_t nv = prim_vertices(prim, n);
+        if (!pk_record_buffers(prim, vb, start * stride, stride, nv, NULL, 0, 0, 0))
+            draw_verts(prim, vb->mem + start * stride, stride, nv, NULL, 0);
     }
     ok_ret(c, 4);
 }
@@ -1586,9 +1733,12 @@ static void dev_DrawIndexedPrimitive(Ctx *c)
     if (vb && ib) {
         int wide = ib->fvf_or_fmt == FMT_INDEX32;
         uint32_t ni = prim_vertices(prim, n);
-        uint16_t *idx = read_indices(ib->mem + start * (wide ? 4u : 2u), ni, wide, min);
         uint32_t stride = dev.stream_stride ? dev.stream_stride : fvf_stride(dev.fvf);
-        draw_verts(prim, vb->mem + (dev.base_vertex + min) * stride, stride, nv, idx, ni);
+        uint32_t voff = (dev.base_vertex + min) * stride;
+        if (!pk_record_buffers(prim, vb, voff, stride, nv, ib, start, ni, min)) {
+            uint16_t *idx = read_indices(ib->mem + start * (wide ? 4u : 2u), ni, wide, min);
+            draw_verts(prim, vb->mem + voff, stride, nv, idx, ni);
+        }
     }
     ok_ret(c, 6);
 }
@@ -1995,7 +2145,7 @@ static void buf_Release(Ctx *c)
             dev.stream_vb = 0;
         if (dev.ib == o)
             dev.ib = 0;
-        heap_free(b->mem);
+        retire(b->mem, b->last_mark);
         free(b);
     }
     stdcall_ret(c, n, 1);
@@ -2005,12 +2155,29 @@ static void vb_GetType(Ctx *c) { stdcall_ret(c, RT_VERTEXBUFFER, 1); }
 static void ib_GetType(Ctx *c) { stdcall_ret(c, RT_INDEXBUFFER, 1); }
 
 /* Lock(offset, size, &data, flags) */
+/* Lock(offset, size, &data, flags): D3DLOCK_DISCARD 0x2000, NOOVERWRITE 0x1000,
+ * READONLY 0x10. A writing Lock (but NOOVERWRITE, whose writes avoid the data in
+ * use) of a buffer recorded draws may still read renames it. */
 static void buf_Lock(Ctx *c)
 {
     Buffer8 *b = com_host(THIS);
     if (!b) {
         stdcall_ret(c, D3DERR_INVALIDCALL, 5);
         return;
+    }
+    uint32_t fl = ARG(4);
+    if (g_pack_thread && !(fl & 0x1010u) && b->last_mark && !rq_passed(b->last_mark)) {
+        uint32_t nm = heap_alloc(b->size ? b->size : 4u);
+        if (nm) {
+            if (!(fl & 0x2000u))   /* a plain Lock keeps the contents */
+                memcpy(g_mem + nm, g_mem + b->mem, b->size);
+            retire(b->mem, b->last_mark);
+            b->mem = nm;
+            b->last_mark = 0;
+            st_renames++;
+        } else {
+            rq_sync();   /* no memory for a new block: wait for the render thread */
+        }
     }
     WR32(ARG(3), b->mem + ARG(1));
     ok_ret(c, 5);

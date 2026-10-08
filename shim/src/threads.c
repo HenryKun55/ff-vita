@@ -123,6 +123,9 @@ SHIM(kernel32, CreateThread)
     if (!t->stack)
         rt_fatal(c, "CreateThread: no memory for the guest stack");
     rt_fninit(&t->ctx);
+#ifdef FF_PROFILE
+    t->ctx.prof = calloc(1, sizeof(RtProf));   /* not sampled: the profile is the main thread's */
+#endif
     t->ctx.fcw = c->fcw;
     t->ctx.r[4] = t->stack + GUEST_THREAD_STACK - 16u;
     thread_setup_tib(&t->ctx, t->stack, t->stack + GUEST_THREAD_STACK);
