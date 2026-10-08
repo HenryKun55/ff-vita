@@ -114,7 +114,7 @@ while [ $waited -lt $((TIMEOUT * 2)) ] && pgrep -f "$MATCH" > /dev/null; do
     waited=$((waited + 1))
 done
 stop
-if [ -s "$DATA/profile.txt" ] && [ "$DATA/profile.txt" -nt "$OUT" ]; then
+if [ -s "$DATA/profile.txt" ]; then   # (removed before the run: this run's)
     cp "$DATA/profile.txt" "$OUT/profile.txt"
     echo "profile: $OUT/profile.txt"
 fi
