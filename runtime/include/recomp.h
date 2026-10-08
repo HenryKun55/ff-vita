@@ -16,6 +16,8 @@
 #include <arm_neon.h>
 #endif
 
+#include "simd.h"
+
 typedef struct Ctx {
     uint32_t r[8];          /* eax ecx edx ebx esp ebp esi edi */
     uint32_t df;            /* direction flag */
@@ -26,6 +28,8 @@ typedef struct Ctx {
     uint32_t fcw;
     uint32_t fsw;           /* condition codes C0-C3 and exception bits; TOP is composed on read */
     struct RtProf *prof;    /* profiler state of this guest thread (FF_PROFILE builds) */
+    Xmm xmm[8];             /* SSE registers (simd.h) */
+    uint64_t mm[8];         /* MMX registers */
 } Ctx;
 
 typedef void (*GuestFn)(Ctx *c);

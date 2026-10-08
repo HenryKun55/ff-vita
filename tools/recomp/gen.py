@@ -1003,6 +1003,153 @@ class FuncGen:
             raise Unsupported(m)
         return h_(ins)
 
+    # ------------------------------------------------------- SSE and MMX
+    # The registers live in the context (c->xmm, c->mm); runtime/include/simd.h has
+    # the operations.
+    def xreg(self, op):
+        name = self.rname(op.reg)
+        if not name.startswith('xmm'):
+            raise Unsupported('xmm operand %s' % name)
+        return 'c->xmm[%d]' % int(name[3:])
+
+    def mmreg(self, op):
+        name = self.rname(op.reg)
+        if not name.startswith('mm'):
+            raise Unsupported('mmx operand %s' % name)
+        return 'c->mm[%d]' % int(name[2:])
+
+    def is_xmm(self, op):
+        return op.type == X.X86_OP_REG and self.rname(op.reg).startswith('xmm')
+
+    def is_mm(self, op):
+        return op.type == X.X86_OP_REG and self.rname(op.reg).startswith('mm')
+
+    def xmov(self, ins, nbytes, offset=0, zero_upper=False):
+        """movaps/movups (16 bytes), movss (4), movlps (8 at 0), movhps (8 at 8)."""
+        d, s = ins.ops
+        if self.is_xmm(d) and self.is_xmm(s):
+            if nbytes == 16:
+                return ['%s = %s;' % (self.xreg(d), self.xreg(s))]
+            return ['memcpy((uint8_t *)&%s + %d, (const uint8_t *)&%s + %d, %d);' % (
+                self.xreg(d), offset, self.xreg(s), offset, nbytes)]
+        if self.is_xmm(d) and s.type == X.X86_OP_MEM:
+            out = 'memcpy((uint8_t *)&%s + %d, %s, %d);' % (self.xreg(d), offset, self.mptr(s), nbytes)
+            if zero_upper:
+                out += ' %s.u[1] = %s.u[2] = %s.u[3] = 0;' % ((self.xreg(d),) * 3)
+            return [out]
+        if d.type == X.X86_OP_MEM and self.is_xmm(s):
+            return ['memcpy(%s, (const uint8_t *)&%s + %d, %d);' % (self.mptr(d), self.xreg(s), offset, nbytes)]
+        raise Unsupported('%s operands' % ins.mnem)
+
+    def i_movaps(self, ins):
+        return self.xmov(ins, 16)
+
+    def i_movups(self, ins):
+        return self.xmov(ins, 16)
+
+    def i_movss(self, ins):
+        return self.xmov(ins, 4, zero_upper=ins.ops[1].type == X.X86_OP_MEM)
+
+    def i_movlps(self, ins):
+        return self.xmov(ins, 8)
+
+    def i_movhps(self, ins):
+        return self.xmov(ins, 8, offset=8)
+
+    def xsrc(self, op):
+        """(prefix, pointer to the source XMM value)."""
+        if self.is_xmm(op):
+            return '', '&' + self.xreg(op)
+        if op.type == X.X86_OP_MEM:
+            return 'Xmm xs_ = rt_xload(%s); ' % self.mptr(op), '&xs_'
+        raise Unsupported('xmm source')
+
+    def xbin(self, ins, fn, extra=''):
+        d, s = ins.ops[0], ins.ops[1]
+        pre, src = self.xsrc(s)
+        return ['{ %s%s(&%s, %s%s); }' % (pre, fn, self.xreg(d), src, extra)]
+
+    def i_mulps(self, ins): return self.xbin(ins, 'rt_mulps')
+    def i_addps(self, ins): return self.xbin(ins, 'rt_addps')
+    def i_subps(self, ins): return self.xbin(ins, 'rt_subps')
+    def i_minps(self, ins): return self.xbin(ins, 'rt_minps')
+    def i_maxps(self, ins): return self.xbin(ins, 'rt_maxps')
+    def i_andps(self, ins): return self.xbin(ins, 'rt_andps')
+    def i_unpcklps(self, ins): return self.xbin(ins, 'rt_unpcklps')
+    def i_unpckhps(self, ins): return self.xbin(ins, 'rt_unpckhps')
+    def i_rcpps(self, ins): return self.xbin(ins, 'rt_rcpps')
+    def i_rsqrtps(self, ins): return self.xbin(ins, 'rt_rsqrtps')
+
+    def i_shufps(self, ins):
+        return self.xbin(ins, 'rt_shufps', ', %du' % (ins.ops[2].imm & 0xFF))
+
+    def msrc(self, op, size=8):
+        """A 64-bit MMX source value (an MMX register or `size` bytes of memory, zero-extended)."""
+        if self.is_mm(op):
+            return self.mmreg(op)
+        if op.type == X.X86_OP_MEM:
+            return '(uint64_t)%s(%s)' % ({4: 'PRD32', 8: 'PRD64'}[size], self.mptr(op))
+        if op.type == X.X86_OP_IMM:
+            return '%du' % (op.imm & 0xFF)
+        raise Unsupported('mmx source')
+
+    def i_cvtpi2ps(self, ins):
+        return ['rt_cvtpi2ps(&%s, %s);' % (self.xreg(ins.ops[0]), self.msrc(ins.ops[1]))]
+
+    def i_cvttps2pi(self, ins):
+        d, s = ins.ops
+        if self.is_xmm(s):
+            return ['%s = rt_cvttps2pi(%s.f[0], %s.f[1]);' % (self.mmreg(d), self.xreg(s), self.xreg(s))]
+        return ['{ Xmm xs_; memcpy(&xs_, %s, 8); %s = rt_cvttps2pi(xs_.f[0], xs_.f[1]); }' % (
+            self.mptr(s), self.mmreg(d))]
+
+    def i_emms(self, ins):
+        return []
+
+    def i_movq(self, ins):
+        d, s = ins.ops
+        if self.is_mm(d):
+            return ['%s = %s;' % (self.mmreg(d), self.msrc(s))]
+        if d.type == X.X86_OP_MEM and self.is_mm(s):
+            return ['PWR64(%s, %s);' % (self.mptr(d), self.mmreg(s))]
+        raise Unsupported('movq operands')
+
+    def i_movd(self, ins):
+        d, s = ins.ops
+        if self.is_mm(d):
+            return ['%s = (uint64_t)(uint32_t)(%s);' % (self.mmreg(d), self.rd(s, 4))]
+        if self.is_mm(s):
+            return [self.wr(d, '(uint32_t)%s' % self.mmreg(s), 4)]
+        raise Unsupported('movd operands')
+
+    def mbin(self, ins, fn, src_size=8):
+        d, s = ins.ops[0], ins.ops[1]
+        return ['%s = %s(%s, %s);' % (self.mmreg(d), fn, self.mmreg(d), self.msrc(s, src_size))]
+
+    def i_psllw(self, ins): return self.mbin(ins, 'rt_psllw')
+    def i_psraw(self, ins): return self.mbin(ins, 'rt_psraw')
+    def i_pmulhw(self, ins): return self.mbin(ins, 'rt_pmulhw')
+    def i_paddw(self, ins): return self.mbin(ins, 'rt_paddw')
+    def i_psubw(self, ins): return self.mbin(ins, 'rt_psubw')
+    def i_psubusw(self, ins): return self.mbin(ins, 'rt_psubusw')
+    def i_punpcklbw(self, ins): return self.mbin(ins, 'rt_punpcklbw', 4)
+    def i_punpcklwd(self, ins): return self.mbin(ins, 'rt_punpcklwd', 4)
+    def i_punpckhwd(self, ins): return self.mbin(ins, 'rt_punpckhwd')
+    def i_packuswb(self, ins): return self.mbin(ins, 'rt_packuswb')
+    def i_packssdw(self, ins): return self.mbin(ins, 'rt_packssdw')
+
+    def i_pxor(self, ins):
+        d, s = ins.ops
+        return ['%s ^= %s;' % (self.mmreg(d), self.msrc(s))]
+
+    def i_pand(self, ins):
+        d, s = ins.ops
+        return ['%s &= %s;' % (self.mmreg(d), self.msrc(s))]
+
+    def i_por(self, ins):
+        d, s = ins.ops
+        return ['%s |= %s;' % (self.mmreg(d), self.msrc(s))]
+
     # ------------------------------------------------------- integer ALU
     def binop(self, ins, kind, cexpr, write=True, cin=False):
         a = ins.addr
