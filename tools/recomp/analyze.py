@@ -54,6 +54,7 @@ class Analyzer:
         self.md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
         self.md.detail = True
         self._cache = {}
+        self.strong = set()
         self.noreturn_imports = {'ExitProcess', 'TerminateProcess', 'RaiseException', 'exit', '_exit',
                                  '_CxxThrowException', '?terminate@@YAXXZ'}
         self.noreturn = set()
@@ -196,7 +197,7 @@ class Analyzer:
                     return fn
                 if a in fn.insns:
                     break
-                if a != entry and a in known_entries and a not in fn.block_starts:
+                if a != entry and a in self.strong and a in known_entries and a not in fn.block_starts:
                     # Falling into another function: treat as tail call.
                     fn.tail_calls.add(a)
                     break
@@ -216,7 +217,7 @@ class Analyzer:
                 if m == 'jmp':
                     t = self.direct_target(ins)
                     if t is not None:
-                        if t in known_entries and t != entry:
+                        if t in known_entries and t in self.strong and t != entry:
                             fn.tail_calls.add(a)
                         else:
                             fn.block_starts.add(t)
@@ -377,6 +378,11 @@ class Analyzer:
 
     def _run_once(self, banned):
         entries = {self.pe.entry}
+        # Entries that end the function falling or jumping into them: real starts
+        # (direct call targets, the entry point, aligned starts after padding).
+        # Pointers found in data or immediates may be mid-function labels; cutting
+        # there would lose the flags and registers live across the cut.
+        self.strong = {self.pe.entry}
         data_ptrs = self.code_pointers_in_data()
         funcs = {}
         imm_ptrs = set()
@@ -394,6 +400,8 @@ class Analyzer:
             for ins in fn.insns.values():
                 if ins.mnem == 'call':
                     t = self.direct_target(ins)
+                    if t is not None and self.in_text(t):
+                        self.strong.add(t)
                     if t is not None and self.in_text(t) and t not in entries:
                         entries.add(t)
                         work.append(t)
@@ -423,6 +431,7 @@ class Analyzer:
                             banned.add(p)
                             continue
                         entries.add(p)
+                        self.strong.add(p)
                         work.append(p)
         return funcs, entries
 
