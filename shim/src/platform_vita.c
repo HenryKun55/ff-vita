@@ -5,6 +5,7 @@
 #include "bench.h"
 #include "pad_input.h"
 #include "runtime.h"
+#include "vita_bootui.h"
 
 #include <SDL.h>
 #include <psp2/ctrl.h>
@@ -25,6 +26,51 @@
 static int mode_w = 640, mode_h = 480;
 static int gl_ready;
 
+/* ---- boot picture --------------------------------------------------------
+ * vitaGL only starts with the display mode, a few seconds in. Meanwhile app0:boot.rgba
+ * (the key art at 960x544, made by tools/make_vita_livearea.py) is shown from a plain
+ * display buffer, with the version and the update check drawn over it
+ * (vita_bootui.c); it is released once vitaGL has presented two frames. */
+#define BOOT_FB_SIZE 0x200000u   /* 960 x 544 x 4 rounded up to the CDRAM granularity */
+
+static SceUID boot_fb_block = -1;
+static uint32_t *boot_fb_base;
+static int boot_fb_swaps;
+
+static void boot_picture_show(void)
+{
+    FILE *f = fopen("app0:boot.rgba", "rb");
+    if (!f) {
+        rt_log("boot picture: app0:boot.rgba missing");
+        return;
+    }
+    SceUID block = sceKernelAllocMemBlock("ff_boot_fb", SCE_KERNEL_MEMBLOCK_TYPE_USER_CDRAM_RW, BOOT_FB_SIZE, NULL);
+    void *base = NULL;
+    if (block < 0 || sceKernelGetMemBlockBase(block, &base) < 0) {
+        fclose(f);
+        return;
+    }
+    memset(base, 0, BOOT_FB_SIZE);
+    size_t n = fread(base, 4, SCREEN_W * SCREEN_H, f);
+    fclose(f);
+    if (n != SCREEN_W * SCREEN_H)
+        rt_log("boot picture: app0:boot.rgba is short (%u pixels)", (unsigned)n);
+    SceDisplayFrameBuf dfb;
+    memset(&dfb, 0, sizeof(dfb));
+    dfb.size = sizeof(dfb);
+    dfb.base = base;
+    dfb.pitch = SCREEN_W;
+    dfb.pixelformat = SCE_DISPLAY_PIXELFORMAT_A8B8G8R8;
+    dfb.width = SCREEN_W;
+    dfb.height = SCREEN_H;
+    if (sceDisplaySetFrameBuf(&dfb, SCE_DISPLAY_SETBUF_NEXTFRAME) < 0) {
+        sceKernelFreeMemBlock(block);
+        return;
+    }
+    boot_fb_block = block;
+    boot_fb_base = base;
+}
+
 void platform_init(void)
 {
     scePowerSetArmClockFrequency(444);
@@ -32,6 +78,9 @@ void platform_init(void)
     scePowerSetGpuClockFrequency(222);
     scePowerSetGpuXbarClockFrequency(166);
     sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG_WIDE);
+    boot_picture_show();
+    /* The version and the update check over the boot picture (vita_bootui.c). */
+    vita_bootui_run(boot_fb_base);
     if (SDL_Init(SDL_INIT_AUDIO | SDL_INIT_TIMER) != 0)
         rt_fatal(NULL, "SDL_Init: %s", SDL_GetError());
 }
@@ -106,6 +155,12 @@ void platform_get_drawable_size(int *w, int *h)
 void platform_swap(void)
 {
     vglSwapBuffers(GL_FALSE);
+    /* vitaGL's buffers are on screen: the boot picture's can go. */
+    if (boot_fb_block >= 0 && ++boot_fb_swaps >= 2) {
+        sceDisplayWaitVblankStart();
+        sceKernelFreeMemBlock(boot_fb_block);
+        boot_fb_block = -1;
+    }
 }
 
 /* ---- controls -----------------------------------------------------------

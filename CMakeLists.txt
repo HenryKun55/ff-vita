@@ -13,9 +13,12 @@ if(NOT EXISTS "${FF_EXE}")
     message(FATAL_ERROR "Freedom.Exe not found at ${FF_EXE}; pass -DFF_EXE=/path/to/Freedom.Exe")
 endif()
 
-# The port's version: major.minor.patch, each 0-9 for minor and patch (the Vita's
-# APP_VER is NN.NN: 0.1.0 -> 00.10, 1.2.3 -> 01.23).
-set(FF_PORT_VERSION "0.0.1")
+# The port's version: the one place it is set. Vita releases are tagged v<this> on
+# FF_UPDATE_REPO (docs/VITA_RELEASE.md); the update check installs a release only when
+# its version is higher, so raise it for every release. major.minor.patch, each 0-9 for
+# minor and patch (the Vita's APP_VER is NN.NN: 0.1.0 -> 00.10, 1.2.3 -> 01.23).
+set(FF_PORT_VERSION "0.1.0")
+set(FF_UPDATE_REPO "HenryKun55/ff-vita" CACHE STRING "GitHub owner/repo whose releases the Vita update check reads")
 if(NOT FF_PORT_VERSION MATCHES "^([0-9]+)\\.([0-9])\\.([0-9])$")
     message(FATAL_ERROR "FF_PORT_VERSION must be major.minor.patch with one-digit minor and patch")
 endif()
@@ -106,12 +109,57 @@ if(VITA)
         SceShaccCg_stub SceKernelDmacMgr_stub SceCtrl_stub SceTouch_stub SceHid_stub SceMotion_stub
         SceAudio_stub SceAudioIn_stub SceDisplay_stub SceGxm_stub SceCommonDialog_stub SceSysmodule_stub
         ScePower_stub SceAppMgr_stub SceAppUtil_stub SceIme_stub SceLibKernel_stub SceProcessmgr_stub
-        SceIofilemgr_stub
-        z stdc++ pthread m c)
+        SceNet_stub SceNetCtl_stub SceIofilemgr_stub
+        curl ssl crypto z zstd stdc++ pthread m c)
+    # The update check (shim/src/vita_update.c) and its start-up screen (vita_bootui.c).
+    target_compile_definitions(ff PRIVATE FF_UPDATE_REPO="${FF_UPDATE_REPO}")
+    # The LiveArea pictures and the boot picture come from the key art in gamedata/art
+    # (or the game's own logo), so they are made here instead of being kept in the repo.
+    get_filename_component(FF_GAME_DIR "${FF_EXE}" DIRECTORY)
+    set(FF_SCE_SYS "${CMAKE_BINARY_DIR}/sce_sys")
+    file(COPY "${CMAKE_SOURCE_DIR}/platform/vita/sce_sys/" DESTINATION "${FF_SCE_SYS}")
+    execute_process(
+        # No version on the LiveArea: an update from the game doesn't replace sce_sys,
+        # so it would go stale (the boot screen shows the running version).
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/make_vita_livearea.py" "${FF_GAME_DIR}" "${FF_SCE_SYS}"
+        RESULT_VARIABLE FF_LIVEAREA_RESULT)
+    if(NOT FF_LIVEAREA_RESULT EQUAL 0)
+        message(FATAL_ERROR "tools/make_vita_livearea.py failed (it needs Pillow: pip install Pillow)")
+    endif()
+    # The start-up screen's fonts (Oswald, OFL).
+    set(FF_BOOT_FONTS "${CMAKE_BINARY_DIR}/vita_font")
+    execute_process(
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/make_vita_boot_font.py" "${FF_BOOT_FONTS}"
+        RESULT_VARIABLE FF_FONT_RESULT)
+    if(NOT FF_FONT_RESULT EQUAL 0)
+        message(FATAL_ERROR "tools/make_vita_boot_font.py failed (it needs Pillow: pip install Pillow)")
+    endif()
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/tools/make_vita_livearea.py"
+        "${CMAKE_SOURCE_DIR}/tools/make_vita_boot_font.py" "${CMAKE_SOURCE_DIR}/platform/vita/fonts/Oswald.ttf")
+
+    # updater.bin: puts a downloaded release in place of the game's files
+    # (platform/vita/updater). A separate program, so the game is closed while its files
+    # are replaced; unsafe, as only unsafe homebrew may write to ux0:app.
+    set(FF_UPDATER_DIR "${CMAKE_SOURCE_DIR}/platform/vita/updater")
+    add_executable(ff_updater "${FF_UPDATER_DIR}/updater.c" "${FF_UPDATER_DIR}/debugScreen.c")
+    target_compile_options(ff_updater PRIVATE -Wall -Wextra)
+    target_link_libraries(ff_updater PRIVATE png z m
+        SceDisplay_stub SceCtrl_stub SceAppMgr_stub ScePower_stub SceLibKernel_stub
+        SceKernelThreadMgr_stub SceIofilemgr_stub SceProcessmgr_stub)
+    vita_create_self(updater.bin ff_updater UNSAFE)
+
     vita_create_self(eboot.bin ff UNSAFE)
     vita_create_vpk(ff.vpk ${VITA_TITLEID} eboot.bin
         VERSION ${VITA_VERSION}
-        NAME "Freedom Fighters")
+        NAME "Freedom Fighters"
+        FILE ${FF_SCE_SYS} sce_sys
+             "${CMAKE_BINARY_DIR}/boot.rgba" boot.rgba
+             "${CMAKE_BINARY_DIR}/updater.bin.out" updater.bin
+             # CA certificates for the update check's HTTPS (curl.se/ca, MPL 2.0)
+             "${FF_UPDATER_DIR}/cacert.pem" cacert.pem
+             "${FF_BOOT_FONTS}/boot.font" font/boot.font
+             "${FF_BOOT_FONTS}/boot_small.font" font/boot_small.font
+             "${CMAKE_SOURCE_DIR}/platform/vita/fonts/OFL.txt" font/Oswald-OFL.txt)
 else()
     find_package(SDL2 REQUIRED)
     find_package(OpenGL REQUIRED)

@@ -19,7 +19,13 @@
 #define INFINITE 0xFFFFFFFFu
 
 #define GUEST_THREAD_STACK (1024u * 1024u)
+/* Host stack of a guest thread: the generated code nests one C frame per guest
+ * call. The Vita has little memory outside the newlib heap for thread stacks. */
+#if defined(__vita__)
+#define HOST_THREAD_STACK (1024u * 1024u)
+#else
 #define HOST_THREAD_STACK (4u * 1024u * 1024u)
+#endif
 
 /* A waitable object: a thread (signaled when it ends) or an event. */
 typedef struct Waitable {
@@ -126,14 +132,20 @@ SHIM(kernel32, CreateThread)
     if (idp)
         WR32(idp, t->id);
 
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);
-    pthread_attr_setstacksize(&attr, HOST_THREAD_STACK);
-    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
     pthread_t pt;
-    if (pthread_create(&pt, &attr, thread_main, t) != 0)
-        rt_fatal(c, "CreateThread: pthread_create failed");
-    pthread_attr_destroy(&attr);
+    int err = -1;
+    for (uint32_t stack = HOST_THREAD_STACK; err && stack >= 256u * 1024u; stack /= 2u) {
+        pthread_attr_t attr;
+        pthread_attr_init(&attr);
+        pthread_attr_setstacksize(&attr, stack);
+        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+        err = pthread_create(&pt, &attr, thread_main, t);
+        pthread_attr_destroy(&attr);
+        if (err)
+            rt_log("CreateThread: pthread_create with a %u KiB stack failed (%d)", stack >> 10, err);
+    }
+    if (err)
+        rt_fatal(c, "CreateThread: no host thread for %08X", proc);
     stdcall_ret(c, h, 6);
 }
 
