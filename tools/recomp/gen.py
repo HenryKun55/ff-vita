@@ -1334,7 +1334,12 @@ class FuncGen:
             out = ['{ uint32_t p = (eax & 0xFFu) * %s;' % self.rd(o), self.reg_write('ax', 'p')]
             ov = '(p >> 8) != 0'
         else:
-            raise Unsupported('mul16')
+            out = ['{ uint32_t p = (eax & 0xFFFFu) * %s;' % self.rd(o), self.reg_write('ax', 'p'),
+                   self.reg_write('dx', 'p >> 16')]
+            ov = '(p >> 16) != 0'
+            out += self.mul_flags(live, ov, '(p & 0xFFFFu)')
+            out.append('}')
+            return [' '.join(out)]
         out += self.mul_flags(live, ov, 'eax')
         out.append('}')
         return [' '.join(out)]
@@ -1367,10 +1372,21 @@ class FuncGen:
                        self.reg_write('ax', '(uint32_t)p')]
                 out += self.mul_flags(live, 'p != (int32_t)(int8_t)p', 'eax')
             else:
-                raise Unsupported('imul16')
+                out = ['{ int32_t p = (int32_t)(int16_t)(eax & 0xFFFFu) * (int32_t)(int16_t)%s;' % self.rd(o[0]),
+                       self.reg_write('ax', '(uint32_t)p'), self.reg_write('dx', '(uint32_t)p >> 16')]
+                out += self.mul_flags(live, 'p != (int32_t)(int16_t)p', '((uint32_t)p & 0xFFFFu)')
             out.append('}')
             return [' '.join(out)]
         dst = o[0]
+        if dst.size == 2:
+            a_ = self.rd(o[1], 2) if len(o) == 2 else self.rd(o[1], 2)
+            b_ = self.rd(o[0], 2) if len(o) == 2 else self.rd(o[2], 2)
+            out = ['{ int32_t p = (int32_t)(int16_t)%s * (int32_t)(int16_t)%s;' % (a_, b_),
+                   'uint32_t r = (uint32_t)p & 0xFFFFu;']
+            out += self.mul_flags(live, 'p != (int32_t)(int16_t)p', 'r')
+            out.append(self.wr(dst, 'r', 2))
+            out.append('}')
+            return [' '.join(out)]
         if dst.size != 4:
             raise Unsupported('imul16')
         a_ = self.rd(o[1]) if len(o) == 2 else self.rd(o[1])
@@ -1394,10 +1410,27 @@ class FuncGen:
             return ['{ uint32_t v = %s; uint32_t n = eax & 0xFFFFu; '
                     'if (!v) { SPILL; rt_divide_error(c, %s); return RETC; } '
                     'eax = (eax & 0xFFFF0000u) | ((n %% v) << 8) | ((n / v) & 0xFFu); }' % (self.rd(o), h(ins.addr))]
+        if o.size == 2:
+            return ['{ uint32_t v = %s; uint32_t n = ((edx & 0xFFFFu) << 16) | (eax & 0xFFFFu); '
+                    'if (!v) { SPILL; rt_divide_error(c, %s); return RETC; } '
+                    'uint32_t q = n / v, m = n %% v; '
+                    'eax = (eax & 0xFFFF0000u) | (q & 0xFFFFu); edx = (edx & 0xFFFF0000u) | m; }' % (self.rd(o), h(ins.addr))]
         raise Unsupported('div16')
 
     def i_idiv(self, ins):
         o = ins.ops[0]
+        if o.size == 2:
+            return ['{ int32_t v = (int32_t)(int16_t)%s; int32_t n = (int32_t)(((edx & 0xFFFFu) << 16) | (eax & 0xFFFFu)); '
+                    'if (!v) { SPILL; rt_divide_error(c, %s); return RETC; } '
+                    'int32_t q = (v == -1) ? (int32_t)(0u - (uint32_t)n) : n / v; int32_t m = (v == -1) ? 0 : n %% v; '
+                    'eax = (eax & 0xFFFF0000u) | ((uint32_t)q & 0xFFFFu); edx = (edx & 0xFFFF0000u) | ((uint32_t)m & 0xFFFFu); }'
+                    % (self.rd(o), h(ins.addr))]
+        if o.size == 1:
+            return ['{ int32_t v = (int32_t)(int8_t)%s; int32_t n = (int32_t)(int16_t)(eax & 0xFFFFu); '
+                    'if (!v) { SPILL; rt_divide_error(c, %s); return RETC; } '
+                    'int32_t q = n / v, m = n %% v; '
+                    'eax = (eax & 0xFFFF0000u) | (((uint32_t)m & 0xFFu) << 8) | ((uint32_t)q & 0xFFu); }'
+                    % (self.rd(o), h(ins.addr))]
         if o.size != 4:
             raise Unsupported('idiv8/16')
         return ['{ int32_t v = (int32_t)%s; int64_t n = (int64_t)(((uint64_t)edx << 32) | eax); '

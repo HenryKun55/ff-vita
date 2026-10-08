@@ -317,7 +317,7 @@ int main(int argc, char **argv)
 #else
     if (!dir)
         dir = ".";
-    log_file = fopen("ff.log", "w");
+    log_file = fopen(getenv("FF_LOG") ? getenv("FF_LOG") : "ff.log", "w");
 #endif
     snprintf(g_game_dir, sizeof(g_game_dir), "%s", dir);
     if (log_file)
