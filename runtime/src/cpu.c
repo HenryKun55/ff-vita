@@ -530,22 +530,9 @@ void rt_cpuid(Ctx *c)
 
 uint64_t win32_perf_counter(void);   /* microseconds */
 
-/* A 1 GHz time stamp counter. The game reads it only as the seed of its random
- * numbers (0x005D5D30, thousands of times per frame) and into a local nothing
- * reads (0x005B9170); its clocks are GetTickCount and QueryPerformanceCounter,
- * which this does not touch. Each clock query is a system call on the Vita, so the
- * real clock is read every 64th time and in between the counter moves on 1 us per
- * read, never backwards. */
+/* A 1 GHz time stamp counter, read from the real clock every time: the game
+ * calibrates it at start ("CPU Cycles pr second") and times with it. */
 uint64_t rt_rdtsc(void)
 {
-    static uint32_t n;
-    static uint64_t last;
-    uint64_t t = last + 1000u;
-    if ((n++ & 63u) == 0u) {
-        uint64_t real = win32_perf_counter() * 1000ull;
-        if (real > t)
-            t = real;
-    }
-    last = t;
-    return t;
+    return win32_perf_counter() * 1000ull;
 }
