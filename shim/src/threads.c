@@ -141,8 +141,10 @@ SHIM(kernel32, CreateThread)
         pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
         err = pthread_create(&pt, &attr, thread_main, t);
         pthread_attr_destroy(&attr);
-        if (err)
+        if (err) {
             rt_log("CreateThread: pthread_create with a %u KiB stack failed (%d)", stack >> 10, err);
+            mem_report("thread creation failed");
+        }
     }
     if (err)
         rt_fatal(c, "CreateThread: no host thread for %08X", proc);

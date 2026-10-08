@@ -324,6 +324,7 @@ int main(int argc, char **argv)
         setvbuf(log_file, NULL, _IONBF, 0);
 
     mem_init();
+    mem_report("start");
     if (getenv("FF_LOG_CALLS"))
         log_calls_at = atof(getenv("FF_LOG_CALLS"));
     char exe[1100];

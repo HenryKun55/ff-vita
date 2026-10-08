@@ -30,6 +30,8 @@
 extern uint32_t g_guest_mem_size;
 
 void mem_init(void);
+/* Logs the host memory budget (Vita). */
+void mem_report(const char *where);
 uint32_t mem_heap_limit(void);
 
 /* Scratch allocator for host-owned guest structures that live forever. */

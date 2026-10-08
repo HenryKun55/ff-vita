@@ -147,9 +147,11 @@ void platform_gl_init(void)
         /* 8 MiB for immediate-mode/legacy state; textures go to vitaGL's own pools.
          * vitaGL takes all the main RAM but ram_threshold for its pools: what stays
          * free is what the game's threads (their stacks), the audio, the update
-         * check and the shader compiler allocate from the kernel. 16 MiB was too
-         * little for Freedom Fighters (thread creation and shader compiles failed). */
-        vglInitExtended(0x800000, SCREEN_W, SCREEN_H, 0x3000000, SCE_GXM_MULTISAMPLE_NONE);
+         * check and the shader compiler allocate from the kernel (most of their
+         * memory comes from the newlib heap, sized in memory.c). */
+        mem_report("before vitaGL");
+        vglInitExtended(0x800000, SCREEN_W, SCREEN_H, 0x1800000, SCE_GXM_MULTISAMPLE_NONE);
+        mem_report("after vitaGL");
         gl_ready = 1;
     }
 }

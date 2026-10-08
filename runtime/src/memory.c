@@ -7,8 +7,11 @@
 
 #if defined(__vita__)
 #include <malloc.h>
-/* newlib heap: guest address space plus host allocations (textures live in vitaGL pools). */
-int _newlib_heap_size_user = 224 * 1024 * 1024;
+/* newlib heap: the guest address space (160 MiB) plus host allocations (thread
+ * stacks, the shader compiler, the renderer's buffers); textures live in vitaGL's
+ * pools. With the extended memory mode (ATTRIBUTE2=12 in param.sfo); the rest of
+ * it is vitaGL's. */
+int _newlib_heap_size_user = 272 * 1024 * 1024;
 #else
 #include <sys/mman.h>
 #endif
@@ -43,6 +46,27 @@ void mem_init(void)
 }
 
 uint32_t mem_heap_limit(void) { return g_guest_mem_size; }
+
+#if defined(__vita__)
+#include <psp2/kernel/sysmem.h>
+#endif
+
+/* Host memory budget in the log (Vita: newlib heap and the system's free memory). */
+void mem_report(const char *where)
+{
+#if defined(__vita__)
+    struct mallinfo mi = mallinfo();
+    SceKernelFreeMemorySizeInfo fm;
+    memset(&fm, 0, sizeof(fm));
+    fm.size = sizeof(fm);
+    sceKernelGetFreeMemorySize(&fm);
+    rt_log("memory (%s): newlib %u KiB in use of %u KiB taken, %u KiB free in it; system free: main %u KiB, cdram %u KiB, phycont %u KiB",
+           where, (unsigned)(mi.uordblks >> 10), (unsigned)(mi.arena >> 10), (unsigned)(mi.fordblks >> 10),
+           (unsigned)(fm.size_user >> 10), (unsigned)(fm.size_cdram >> 10), (unsigned)(fm.size_phycont >> 10));
+#else
+    (void)where;
+#endif
+}
 
 /* ---- scratch ------------------------------------------------------------ */
 

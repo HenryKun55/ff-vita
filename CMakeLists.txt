@@ -39,6 +39,9 @@ if(DEFINED VITA_ELF_CREATE)
     set(VITA TRUE)
     include("$ENV{VITASDK}/share/vita.cmake" REQUIRED)
     set(VITA_TITLEID "FFRD00001" CACHE STRING "Vita title id")
+    # ATTRIBUTE2=12: the extended memory mode (about 109 MiB more main memory). The
+    # game's 160 MiB of guest memory, the host side and vitaGL do not fit without it.
+    set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d ATTRIBUTE2=12")
     set(VITA_VERSION "${FF_APP_VER}")
     add_compile_definitions(__vita__)
     add_compile_options(-mcpu=cortex-a9 -mfpu=neon -mfloat-abi=hard -fno-short-enums
