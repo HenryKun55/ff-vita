@@ -2230,6 +2230,14 @@ class Generator:
         body = [re.sub(r'\breturn\b', 'PROF_EXIT; return', line) for line in body]
         text = '\n'.join(body)
         out = [FUNC_PROTO % entry, '{'] + self.prologue(text, fg) + ['    PROF_ENTER(%s);' % h(entry), text, '}\n\n']
+        # Native hooks are declared where they are used (not in recomp_gen.h, which
+        # every generated file includes: adding one rebuilds only this file).
+        decls = []
+        if hle:
+            decls.append('int %s(Ctx *c, uint32_t esp, uint32_t ecx, uint32_t eax, uint64_t *ret);' % hle)
+        for hk in sorted(set(fg.fn.insns) & set(self.block_hooks)):
+            decls.append('int %s(Ctx *c);' % self.block_hooks[hk][0])
+        out = decls + out
         if entry in self.an.eh_try_funcs:
             out = self.eh_wrap(entry, out)
         if 'setjmp(' in text:
@@ -2325,11 +2333,7 @@ class Generator:
                     'esp = c->r[4]; ebp = c->r[5]; esi = c->r[6]; edi = c->r[7]; } while (0)\n\n')
             for e in sorted(self.funcs):
                 f.write('%s;\nvoid w_%08X(Ctx *c);\n' % (FUNC_PROTO % e, e))
-            # Native versions and HLE routines hooked at function entries.
-            for name in sorted(set(self.hle.values())):
-                f.write('int %s(Ctx *c, uint32_t esp, uint32_t ecx, uint32_t eax, uint64_t *ret);\n' % name)
-            for name in sorted({hk[0] for hk in self.block_hooks.values()}):
-                f.write('int %s(Ctx *c);\n' % name)
+
             f.write('\n')
             for cname in sorted(self.imports_used):
                 f.write('void %s(Ctx *c);\n' % cname)
