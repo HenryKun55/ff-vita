@@ -49,6 +49,8 @@ typedef struct FrameParams {
 
 enum { DIAG_NONE, DIAG_NO_BATCH, DIAG_NO_CULL, DIAG_FLIP_ZREMAP, DIAG_NO_SCREEN, DIAG_NO_3D, DIAG_DEPTH_LEQUAL,
        DIAG_NO_COMPACT, DIAG_USEPROGRAM, DIAG_ZERO_UV, DIAG_LEVEL0, DIAG_NO_NEARCLIP, DIAG_NO_VB_CACHE, DIAG_VBO,
+       /* GPU cost: leave a part of the drawing out */
+       DIAG_NO_BLENDED, DIAG_NO_FOG, DIAG_NO_TEXTURE, DIAG_NO_ALPHATEST, DIAG_NO_LIGHTING,
        DIAG_COUNT };
 
 /* A texture stage as the draw uses it. */

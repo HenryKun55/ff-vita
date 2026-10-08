@@ -926,7 +926,7 @@ static int apply_stages(const DrawCmd *d)
         glClientActiveTexture(GL_TEXTURE0 + (GLenum)i);
         /* A stage without a texture passes the previous result through, as in D3D
          * (the front end leaves tex 0 for every stage that is off). */
-        if (!st->tex) {
+        if (!st->tex || B.diag == DIAG_NO_TEXTURE) {
             glDisable(GL_TEXTURE_2D);
             glDisableClientState(GL_TEXTURE_COORD_ARRAY);
             continue;
@@ -1249,7 +1249,9 @@ static void apply_states_now(const DrawCmd *d)
     } else {
         glDisable(GL_BLEND);
     }
-    if (d->alphatest) {
+    if (B.diag == DIAG_NO_ALPHATEST) {
+        glDisable(GL_ALPHA_TEST);
+    } else if (d->alphatest) {
         glEnable(GL_ALPHA_TEST);
         glAlphaFunc(gl_cmp(d->alphafunc), (d->alpharef & 0xFFu) / 255.0f);
     } else if (d->colorkey) {
@@ -1269,7 +1271,7 @@ static void apply_states_now(const DrawCmd *d)
     glShadeModel(d->shademode == 1u ? GL_FLAT : GL_SMOOTH);
     glPolygonMode(GL_FRONT_AND_BACK, d->fillmode == 2u ? GL_LINE : d->fillmode == 1u ? GL_POINT : GL_FILL);
 
-    if (d->fog) {
+    if (d->fog && B.diag != DIAG_NO_FOG) {
         glEnable(GL_FOG);
         float fc[4];
         color4(d->fogcolor, fc);
@@ -1319,7 +1321,7 @@ static void apply_states_now(const DrawCmd *d)
         glDisable(GL_FOG);
     }
 
-    if (!pretransformed && d->lighting && d->L.has_normal) {
+    if (!pretransformed && d->lighting && d->L.has_normal && B.diag != DIAG_NO_LIGHTING) {
         glEnable(GL_LIGHTING);
         apply_lights();
         /* D3D takes the material color from the vertex only when the vertex has
@@ -1419,6 +1421,8 @@ void bk_draw(const void *cmd)
     const Layout *L = &d->L;
     const DrawArrays *A = &d->A;
     const uint32_t nv = d->nv, ni = d->ni;
+    if (B.diag == DIAG_NO_BLENDED && d->blend)
+        return;
     uint64_t t0 = bk_now();
 #if defined(__vita__)
     /* The arena buffer objects point at this draw's data (no copy in vitaGL). */

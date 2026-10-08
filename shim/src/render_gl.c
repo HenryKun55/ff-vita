@@ -201,7 +201,8 @@ static int cull_override;
 static const char *const diag_names[DIAG_COUNT] = { "NORMAL", "NO BATCH", "NO CULL", "FLIP ZREMAP",
                                                      "NO 2D VERTS", "NO 3D VERTS", "DEPTH LEQUAL", "NO COMPACT",
                                                      "USEPROGRAM", "ZERO UV", "LEVEL0",
-                                                     "NO NEARCLIP", "NO VB CACHE", "VBO" };
+                                                     "NO NEARCLIP", "NO VB CACHE", "VBO", "NO BLENDED",
+                                                     "NO FOG", "NO TEXTURE", "NO ALPHATEST", "NO LIGHTING" };
 int render_diag_no_vb_cache(void)
 {
     return diag_mode == DIAG_NO_VB_CACHE;
@@ -576,6 +577,42 @@ static void maybe_screenshot(void)
 
 static void pk_frame_cmd(const void *unused);
 
+/* diag_cycle=1 in ff.cfg (Vita) or FF_DIAG_CYCLE=1: the modes that leave a part of
+ * the drawing out, 4 s each in turn (normal between them), so the fps per mode in
+ * ff.log (overlay=1) shows what a slow scene spends its GPU time on. */
+static void diag_auto_cycle(void)
+{
+    static int on = -1, step;
+    static uint64_t next;
+    static const int seq[] = { DIAG_NONE, DIAG_NO_3D, DIAG_NONE, DIAG_NO_SCREEN, DIAG_NONE, DIAG_NO_BLENDED,
+                               DIAG_NONE, DIAG_NO_FOG, DIAG_NONE, DIAG_NO_TEXTURE, DIAG_NONE, DIAG_NO_ALPHATEST,
+                               DIAG_NONE, DIAG_NO_LIGHTING };
+    if (on < 0) {
+        on = 0;
+#if defined(__vita__)
+        FILE *f = fopen("ux0:data/ff/ff.cfg", "r");
+        if (f) {
+            char buf[128];
+            while (fgets(buf, sizeof(buf), f))
+                if (!strncmp(buf, "diag_cycle=1", 12))
+                    on = 1;
+            fclose(f);
+        }
+#else
+        const char *e = getenv("FF_DIAG_CYCLE");
+        on = e && e[0] == '1';
+#endif
+    }
+    if (!on)
+        return;
+    uint64_t now = win32_perf_counter();
+    if (now < next)
+        return;
+    next = now + 4000000u;
+    render_diag_set(seq[step]);
+    step = (step + 1) % (int)(sizeof(seq) / sizeof(seq[0]));
+}
+
 /* ---- kept frames -------------------------------------------------------------
  * A D3D back buffer keeps its pixels across Present; GL's do not, and the device
  * starts every frame black. The game relies on it on its loading screens: the
@@ -628,6 +665,7 @@ void render_present(void)
         rq_exec(pk_frame_cmd, NULL, 0);
     keep_frame();
     g_frame_serial++;
+    diag_auto_cycle();
     /* FF_TRACE_EVERY=N: trace (log every draw + save the image of) every Nth frame. */
     static int trace_every = -1;
     static unsigned present_count;
@@ -3344,6 +3382,13 @@ static void perf_frame_begin_swap(void)
                (double)perf.fps, (double)perf.ms_frame, (double)perf.ms_game, (double)perf.ms_draw,
                (double)perf.ms_swap, perf.draws_per_frame, perf.gpu_draws_per_frame,
                (double)rq_take_busy_us() / n / 1000.0);
+#if defined(__vita__)
+        /* What the GPU's memory pools have left: textures that do not fit in CDRAM go
+         * to slower memory, which can make the GPU (and every thread waiting for it) slow. */
+        rt_log("perf: vitaGL free: cdram %u KiB, ram %u KiB, phycont %u KiB, newlib %u KiB",
+               (unsigned)(vglMemFree(VGL_MEM_VRAM) / 1024u), (unsigned)(vglMemFree(VGL_MEM_RAM) / 1024u),
+               (unsigned)(vglMemFree(VGL_MEM_SLOW) / 1024u), (unsigned)(vglMemFree(VGL_MEM_EXTERNAL) / 1024u));
+#endif
         rt_log("perf: draw = state %.2f + tex %.2f + pack %.2f + gl %.2f ms (+ rest); %.0f verts %.0f idx; "
                "tex %.1f uploads %.1f skipped %.0f KB; 2d %.1f blits %.2f ms %.0f KB; %.1f readbacks",
                (double)(a[PC_STATE_US] / 1000.0f), (double)(a[PC_TEX_US] / 1000.0f),
