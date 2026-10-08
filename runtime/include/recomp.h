@@ -187,6 +187,15 @@ static inline uint32_t rt_fstsw(uint32_t sw, uint32_t top) { return (sw & ~0x380
 
 uint32_t rt_fxam(uint32_t sw, double v);
 
+/* msvcrt _ftol (inlined at its call sites): truncation to 64 bits, the integer
+ * indefinite (INT64_MIN) when out of range or NaN. */
+static inline int64_t rt_ftol64(double v)
+{
+    if (!(v > -9223372036854775808.0 && v < 9223372036854775808.0))
+        return INT64_MIN;
+    return (int64_t)v;
+}
+
 /* Define FF_X87_CHECK to verify the statically derived x87 stack effect of every
  * call whose effect the generator considers proven. */
 void rt_x87_mismatch(Ctx *c, uint32_t addr, uint32_t expect);

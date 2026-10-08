@@ -85,7 +85,8 @@ NATIVE = {
         (0x006A5600, 1973, '1be70f4eab47cd9da6b15826467ef32f69e193f8'),
         (0x006A5DB8, 32, '4d99f504608ea571af1504ae7f74a14e73c250d2'),   # its jump tables
         (0x005F83B0, 31, '2052b11c3eb570f3acac63351149b4f44a9ea96d'),   # vector scale it calls
-    ]),
+    ]),    # Segment / axis-aligned box test (runtime/src/native_raybox.c).
+    0x005FF460: ('rt_native_segment_box', [(0x005FF460, 723, '65773ff6c1f03992cbff624ae5cfcaff2362de31')]),
 }
 
 # Native versions of a part of a function: hook address -> (host function,
@@ -611,7 +612,15 @@ class FuncGen:
         self.fsync = sync
 
     def has_x87(self):
-        return any(self.x87_fpu_info(self.fn.insns[a]) is not None for a in self.order)
+        return any(self.x87_fpu_info(self.fn.insns[a]) is not None or self.ftol_call(self.fn.insns[a])
+                   for a in self.order)
+
+    def ftol_call(self, ins):
+        """A call of the game's _ftol thunk (inlined: reads and pops ST(0))."""
+        if ins.mnem != 'call':
+            return False
+        t = self.an.direct_target(ins)
+        return t is not None and self.g.import_thunk(t) == '_ftol'
 
     # ------------------------------------------------------ dirty registers
     def compute_dirty(self, raw):
@@ -1666,11 +1675,18 @@ class FuncGen:
             # A no-return function (an import stub of exit, _CxxThrowException...).
             return ['esp -= 4u; GWR32(esp, %s); SPILL; rt_dispatch(c, %s); rt_noreturn(c, %s); return RETC;'
                     % (ret, h(t), h(ins.addr))]
+        if t is not None and self.g.import_thunk(t) == '_ftol':
+            # The game's `_ftol: jmp [__imp__ftol]`: inline (see below).
+            return ['{ int64_t r = rt_ftol64(ST(0)); fpop(c); eax = (uint32_t)r; edx = (uint32_t)((uint64_t)r >> 32); }']
         if t is not None:
             if t in self.g.func_set:
                 return ['esp -= 4u; GWR32(esp, %s); CSPILL; { uint64_t rv = f_%08X(c, esp, ecx, eax); CRELOAD; }' % (ret, t)]
             return ['esp -= 4u; GWR32(esp, %s); SPILL; rt_dispatch(c, %s); RELOAD;' % (ret, h(t))]
         imp = self.an.import_of(ins)
+        if imp and imp[1] == '_ftol':
+            # Inline: ST(0) truncated to a 64-bit integer in edx:eax, popped (msvcrt
+            # _ftol, as shim/src/msvcrt.c does it) without a call through the host.
+            return ['{ int64_t r = rt_ftol64(ST(0)); fpop(c); eax = (uint32_t)r; edx = (uint32_t)((uint64_t)r >> 32); }']
         if imp:
             call = 'esp -= 4u; GWR32(esp, %s); SPILL; %s' % (ret, self.import_call(ins, imp))
             if imp[1] in NORETURN_IMPORTS:
@@ -1991,6 +2007,17 @@ class Generator:
                     changed = True
         self.fsumm = summ
         self.fproven = proven
+
+    def import_thunk(self, a):
+        """Name of the import a function only jumps to (`f: jmp [iat_slot]`), else None."""
+        cache = self.__dict__.setdefault('_thunks', {})
+        if a not in cache:
+            cache[a] = None
+            ins = self.an.decode(a)
+            if ins is not None and ins.mnem == 'jmp':
+                imp = self.an.import_of(ins)
+                cache[a] = imp[1] if imp else None
+        return cache[a]
 
     def import_fn(self, imp):
         dll, name = imp
