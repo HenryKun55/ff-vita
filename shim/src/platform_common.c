@@ -56,7 +56,7 @@ void platform_key(uint8_t dik, int down)
     }
 }
 
-/* IGI_INPUT="ms:action,ms:action,...": scripted input for automated testing.
+/* FF_INPUT="ms:action,ms:action,...": scripted input for automated testing.
  * Actions: a DIK code in hex (tap), "mx+N"/"my+N" relative mouse motion, "lmb" click,
  * "pad+N"/"pad-N" press/release pad control N (hex, PadControl in pad_input.h) the
  * way the Vita's pad does (shim/src/pad_input.c), "key+K"/"key-K" hold/release DIK
@@ -68,11 +68,11 @@ void platform_scripted_input(void)
     static Uint32 t0;
     if (!init) {
         init = 1;
-        script = getenv("IGI_INPUT");
+        script = getenv("FF_INPUT");
 #if defined(__vita__)
         /* No environment on the Vita: read the script from a file. */
         static char buf[4096];
-        FILE *f = fopen("ux0:data/igi/input.txt", "r");
+        FILE *f = fopen("ux0:data/ff/input.txt", "r");
         if (f) {
             size_t n = fread(buf, 1, sizeof(buf) - 1, f);
             buf[n] = 0;
@@ -87,7 +87,7 @@ void platform_scripted_input(void)
     static int release_lmb;
     static Uint32 release_at;
     /* Nothing scripted (left): no clock query. Called on every message poll, at a
-     * rate that follows real time, so a query here would make IGI_FAKE_CLOCK runs
+     * rate that follows real time, so a query here would make FF_FAKE_CLOCK runs
      * depend on real time (and costs a system call on the Vita). */
     if ((!script || !*script) && !release_dik && !release_lmb)
         return;
@@ -95,7 +95,7 @@ void platform_scripted_input(void)
     static Uint32 dbg;
     static int input_debug = -1;
     if (input_debug < 0)
-        input_debug = getenv("IGI_INPUT_DEBUG") != NULL;
+        input_debug = getenv("FF_INPUT_DEBUG") != NULL;
     if (input_debug && now / 2000u != dbg) {
         dbg = now / 2000u;
         rt_log("[input-debug] now %u rel %u/%d at %u next '%.12s'", now, release_dik, release_lmb, release_at,

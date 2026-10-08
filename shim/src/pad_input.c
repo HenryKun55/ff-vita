@@ -1,44 +1,64 @@
-/* Pad controls (see pad_input.h).
+/* Pad controls (see pad_input.h): every control presses what the game's default
+ * PC binding of its action is (the table at 0x751430 in Freedom.Exe), a key, a
+ * mouse button or a mouse wheel step:
  *
- * First version: every control presses a fixed key of the game's default PC
- * bindings. The menus take the arrows, Enter and Esc. */
+ *   left stick  move (W A S D)           right stick  aim / look (mouse)
+ *   R  fire (left button)                L  precision aim (right button)
+ *   X  jump (Space), Enter in the menus  O  crouch (Left Ctrl)
+ *   [] use (E)                           /\ close combat (Q)
+ *   left / up / right  squad: form up (1), attack (2), defend (3)
+ *   down  inventory wheel (middle button)
+ *   SELECT  map (M)                      START  menu (Esc)
+ *   rear touch  upper half previous weapon, lower half next (mouse wheel) */
 #include "pad_input.h"
 #include "platform.h"
 #include "runtime.h"
 
+enum { OUT_NONE, OUT_KEY, OUT_MOUSE, OUT_WHEEL };
+
+typedef struct Output {
+    uint8_t kind;
+    uint8_t code;            /* DIK code, mouse button, or wheel direction (1 up, 2 down) */
+    uint8_t kind2, code2;    /* a second output pressed together with the first */
+} Output;
+
+#define KEY(k) { OUT_KEY, (k), OUT_NONE, 0 }
+#define MOUSE(b) { OUT_MOUSE, (b), OUT_NONE, 0 }
+
 #define DIK_ESCAPE 0x01
+#define DIK_1 0x02
+#define DIK_2 0x03
+#define DIK_3 0x04
+#define DIK_Q 0x10
+#define DIK_W 0x11
 #define DIK_E 0x12
-#define DIK_R 0x13
 #define DIK_RETURN 0x1C
+#define DIK_LCONTROL 0x1D
 #define DIK_A 0x1E
 #define DIK_S 0x1F
 #define DIK_D 0x20
-#define DIK_W 0x11
-#define DIK_C 0x2E
+#define DIK_M 0x32
 #define DIK_SPACE 0x39
-#define DIK_TAB 0x0F
-#define DIK_UP 0xC8
-#define DIK_DOWN 0xD0
-#define DIK_LEFT 0xCB
-#define DIK_RIGHT 0xCD
 
-static const uint8_t control_key[PAD_CONTROL_COUNT] = {
-    [PAD_CROSS] = DIK_RETURN,
-    [PAD_CIRCLE] = DIK_ESCAPE,
-    [PAD_SQUARE] = DIK_E,
-    [PAD_TRIANGLE] = DIK_R,
-    [PAD_L] = DIK_C,
-    [PAD_R] = DIK_SPACE,
-    [PAD_SELECT] = DIK_TAB,
-    [PAD_START] = DIK_ESCAPE,
-    [PAD_DPAD_UP] = DIK_UP,
-    [PAD_DPAD_DOWN] = DIK_DOWN,
-    [PAD_DPAD_LEFT] = DIK_LEFT,
-    [PAD_DPAD_RIGHT] = DIK_RIGHT,
-    [PAD_LSTICK_UP] = DIK_W,
-    [PAD_LSTICK_DOWN] = DIK_S,
-    [PAD_LSTICK_LEFT] = DIK_A,
-    [PAD_LSTICK_RIGHT] = DIK_D,
+static const Output control_out[PAD_CONTROL_COUNT] = {
+    [PAD_CROSS] = { OUT_KEY, DIK_SPACE, OUT_KEY, DIK_RETURN },
+    [PAD_CIRCLE] = KEY(DIK_LCONTROL),
+    [PAD_SQUARE] = KEY(DIK_E),
+    [PAD_TRIANGLE] = KEY(DIK_Q),
+    [PAD_L] = MOUSE(1),
+    [PAD_R] = MOUSE(0),
+    [PAD_SELECT] = KEY(DIK_M),
+    [PAD_START] = KEY(DIK_ESCAPE),
+    [PAD_DPAD_UP] = KEY(DIK_2),
+    [PAD_DPAD_DOWN] = MOUSE(2),
+    [PAD_DPAD_LEFT] = KEY(DIK_1),
+    [PAD_DPAD_RIGHT] = KEY(DIK_3),
+    [PAD_LSTICK_UP] = KEY(DIK_W),
+    [PAD_LSTICK_DOWN] = KEY(DIK_S),
+    [PAD_LSTICK_LEFT] = KEY(DIK_A),
+    [PAD_LSTICK_RIGHT] = KEY(DIK_D),
+    [PAD_REAR_UP] = { OUT_WHEEL, 1, OUT_NONE, 0 },
+    [PAD_REAR_DOWN] = { OUT_WHEEL, 2, OUT_NONE, 0 },
 };
 
 /* ---- output: keys and mouse buttons, reference counted -------------------- */
@@ -69,6 +89,28 @@ void pad_mouse_button(int b, int down)
     }
 }
 
+/* One wheel notch (DirectInput reads it as z motion), on press only. */
+static void wheel_step(int up, int down)
+{
+    if (!down)
+        return;
+    g_mouse.dz += up ? 120 : -120;
+    user32_post_message(0x020A, (uint32_t)(up ? 120 : -120) << 16,
+                        ((uint32_t)g_mouse.y << 16) | ((uint32_t)g_mouse.x & 0xFFFFu));
+}
+
+static void output(uint8_t kind, uint8_t code, int down)
+{
+    switch (kind) {
+    case OUT_KEY: pad_key(code, down); break;
+    case OUT_MOUSE: pad_mouse_button(code, down); break;
+    case OUT_WHEEL: wheel_step(code == 1, down); break;
+    default: break;
+    }
+}
+
+/* No reliable menu/gameplay signal from the game yet: the controls are the same
+ * everywhere (the menus take Enter, Esc, the mouse cursor and its left button). */
 int pad_in_gameplay(void)
 {
     return 0;
@@ -81,8 +123,11 @@ int pad_capturing_key(void)
 
 void pad_control(PadControl control, int down)
 {
-    if ((unsigned)control < PAD_CONTROL_COUNT)
-        pad_key(control_key[control], down);
+    if ((unsigned)control >= PAD_CONTROL_COUNT)
+        return;
+    const Output *o = &control_out[control];
+    output(o->kind, o->code, down);
+    output(o->kind2, o->code2, down);
 }
 
 void pad_tick(void)

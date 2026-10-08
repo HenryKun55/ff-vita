@@ -256,7 +256,7 @@ void rq_sync(void)
 
 extern uint64_t win32_perf_counter(void);
 
-/* The render thread's own clock: win32_perf_counter is the game's (IGI_FAKE_CLOCK
+/* The render thread's own clock: win32_perf_counter is the game's (FF_FAKE_CLOCK
  * advances it per call, so calls from here would change the game's timing). */
 static uint64_t thread_clock_us(void)
 {
@@ -354,13 +354,13 @@ static int lockstep;
 static int want_thread(void)
 {
     int on = 1;
-    const char *e = getenv("IGI_RENDER_THREAD");
+    const char *e = getenv("FF_RENDER_THREAD");
     if (e) {
         on = e[0] != '0';
         lockstep = e[0] == '2';
     }
 #if defined(__vita__)
-    FILE *f = fopen("ux0:data/igi/igi.cfg", "r");
+    FILE *f = fopen("ux0:data/ff/ff.cfg", "r");
     if (f) {
         char buf[128];
         while (fgets(buf, sizeof(buf), f))
@@ -390,13 +390,13 @@ void rq_start(void)
         slots[i].vtx.chunk_size = VTX_CHUNK;
     }
     rq_rec_chunk = slots[0].cmd_first;
-    sema_init(&render_sema, "igi_rq_render");
-    sema_init(&game_sema, "igi_rq_game");
+    sema_init(&render_sema, "ff_rq_render");
+    sema_init(&game_sema, "ff_rq_game");
     platform_gl_release();
 #if defined(__vita__)
     /* The game on core 0, GL on core 1 (the profiler samples from core 2). */
     sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), SCE_KERNEL_CPU_MASK_USER_0);
-    render_tid = sceKernelCreateThread("igi_render", render_entry, 0x10000100, 1u << 20, 0,
+    render_tid = sceKernelCreateThread("ff_render", render_entry, 0x10000100, 1u << 20, 0,
                                        SCE_KERNEL_CPU_MASK_USER_1, NULL);
     if (render_tid < 0 || sceKernelStartThread(render_tid, 0, NULL) < 0)
         rt_fatal(NULL, "render thread: cannot start (%08X)", (unsigned)render_tid);

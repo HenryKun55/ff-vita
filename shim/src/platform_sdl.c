@@ -5,6 +5,7 @@
 #include "runtime.h"
 
 #include <SDL.h>
+#include <unistd.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -225,7 +226,7 @@ void platform_set_video_mode(int w, int h)
         gl = SDL_GL_CreateContext(window);
         if (!gl)
             rt_fatal(NULL, "SDL_GL_CreateContext: %s", SDL_GetError());
-        const char *vs = getenv("IGI_VSYNC");
+        const char *vs = getenv("FF_VSYNC");
         SDL_GL_SetSwapInterval(vs && vs[0] == '0' ? 0 : 1);
     }
     platform_show_window(1);
@@ -289,6 +290,26 @@ void platform_service_main(void)
 #endif
 }
 
+/* Closing the window asks the game to quit (WM_CLOSE). The game may not act on
+ * it (it is loading, or ignores it: DisableAltF4), so the process ends anyway
+ * shortly after. */
+static int quit_watchdog(void *unused)
+{
+    (void)unused;
+    SDL_Delay(1500);
+    rt_log("window closed: ending the process");
+    _exit(0);
+}
+
+static void quit_watchdog_start(void)
+{
+    static int started;
+    if (!started) {
+        started = 1;
+        SDL_DetachThread(SDL_CreateThread(quit_watchdog, "ff_quit", NULL));
+    }
+}
+
 /* Mouse capture requested by DirectInput; re-applied whenever the window gets focus,
  * because macOS ignores relative mode for an unfocused window. */
 static int mouse_capture_wanted;
@@ -338,15 +359,16 @@ static void to_game(int wx, int wy, int32_t *gx, int32_t *gy)
 
 static void handle_event(const SDL_Event *e)
 {
-    /* IGI_NO_HOST_INPUT=1 and benchmarks: automated runs ignore the real keyboard and mouse. */
+    /* FF_NO_HOST_INPUT=1 and benchmarks: automated runs ignore the real keyboard and mouse. */
     static int no_host_input = -1;
     if (no_host_input < 0)
-        no_host_input = getenv("IGI_NO_HOST_INPUT") != NULL || bench_enabled();
+        no_host_input = getenv("FF_NO_HOST_INPUT") != NULL || bench_enabled();
     if (no_host_input && e->type != SDL_QUIT && e->type != SDL_WINDOWEVENT)
         return;
     switch (e->type) {
     case SDL_QUIT:
         user32_post_message(0x0010, 0, 0);   /* WM_CLOSE */
+        quit_watchdog_start();
         break;
     case SDL_KEYDOWN:
     case SDL_KEYUP: {

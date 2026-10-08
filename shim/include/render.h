@@ -1,6 +1,6 @@
 /* Direct3D 7 fixed-function state as consumed by the GL renderer. */
-#ifndef IGI_RENDER_H
-#define IGI_RENDER_H
+#ifndef FF_RENDER_H
+#define FF_RENDER_H
 
 #include "ddraw_priv.h"
 
@@ -105,8 +105,8 @@ void render_clear(uint32_t nrects, const Rect *rects, uint32_t flags, uint32_t c
  * immutable decoded copy of an unchanged vertex buffer) and, when the state
  * changed, a snapshot of it. The render thread then runs the whole draw front end
  * (index scan and rebasing, decoding, rhw and near-plane tests, clipping, batching
- * and packing into GPU memory) before the GL calls. pack_thread=0 in igi.cfg or
- * IGI_PACK_THREAD=0 keeps that work on the game thread. */
+ * and packing into GPU memory) before the GL calls. pack_thread=0 in ff.cfg or
+ * FF_PACK_THREAD=0 keeps that work on the game thread. */
 extern int g_pack_thread;   /* decided by render_init; never changes afterwards */
 /* Game thread, before recording a draw: sends the state snapshot (and texture
  * uploads, lighting) the draw needs unless the render thread has it already. */

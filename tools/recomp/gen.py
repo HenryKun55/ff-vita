@@ -49,7 +49,7 @@ STRING_OPS = {'movsb', 'movsw', 'movsd', 'stosb', 'stosw', 'stosd', 'lodsb', 'lo
 # Guest functions whose entry calls rt_probe (game fixes; none yet).
 GAME_HOOKS = []
 
-# Statically linked setjmp/longjmp (IGI had them; Freedom.Exe imports its CRT).
+# Statically linked setjmp/longjmp: none, Freedom.Exe imports its C runtime.
 SETJMP_FUNC = -1
 LONGJMP_JUMP = -1
 

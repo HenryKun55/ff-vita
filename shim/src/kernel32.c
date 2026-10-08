@@ -1,4 +1,4 @@
-/* kernel32.dll: process, memory, file, time and locale APIs used by IGI.exe and its CRT. */
+/* kernel32.dll: process, memory, file, time and locale APIs used by Freedom.Exe and its CRT. */
 #include "shim.h"
 #include "bench.h"
 
@@ -505,7 +505,7 @@ static int pf_start(void)
         pf_lock = SDL_CreateMutex();
         pf_work = SDL_CreateCond();
         pf_done = SDL_CreateCond();
-        started = pf_lock && pf_work && pf_done && SDL_CreateThread(pf_thread, "igi-io", NULL) != NULL;
+        started = pf_lock && pf_work && pf_done && SDL_CreateThread(pf_thread, "ff-io", NULL) != NULL;
         if (!started)
             rt_log("I/O read-ahead thread unavailable: reads stay synchronous");
     }
@@ -677,7 +677,7 @@ SHIM(kernel32, ReadFile)
     io_calls++;
     static int io_log = -1;
     if (io_log < 0)
-        io_log = getenv("IGI_IO_LOG") != NULL;
+        io_log = getenv("FF_IO_LOG") != NULL;
     if (io_log && t1 - io_last >= 5000000u) {
         rt_log("io: %u ReadFile calls, %llu KB, %.1f ms in the last %.1f s", io_calls,
                (unsigned long long)(io_bytes / 1024u), (double)io_us / 1000.0, (double)(t1 - io_last) / 1e6);
@@ -932,8 +932,8 @@ static uint64_t now_us(void) { return sceKernelGetProcessTimeWide(); }
 #else
 static uint64_t t0_us;
 
-/* IGI_FAKE_CLOCK=N (debug): the clock advances N microseconds per query instead
- * of following real time, so a run (e.g. the benchmark with IGI_BENCH_SHOT) plays
+/* FF_FAKE_CLOCK=N (debug): the clock advances N microseconds per query instead
+ * of following real time, so a run (e.g. the benchmark with FF_BENCH_SHOT) plays
  * the same frames every time and screenshots of two builds can be compared. */
 static int fake_clock = -1;
 static uint64_t fake_us, fake_step;
@@ -941,7 +941,7 @@ static uint64_t fake_us, fake_step;
 static uint64_t now_us(void)
 {
     if (fake_clock < 0) {
-        const char *e = getenv("IGI_FAKE_CLOCK");
+        const char *e = getenv("FF_FAKE_CLOCK");
         fake_step = e ? strtoull(e, NULL, 10) : 0u;
         fake_clock = fake_step != 0;
         fake_us = 1000000u;

@@ -4,8 +4,8 @@
  * object index, reference count, and one spare word. Its vtable is an array of
  * host thunk addresses, so guest `call [vtbl + n*4]` lands in host C code.
  */
-#ifndef IGI_COM_H
-#define IGI_COM_H
+#ifndef FF_COM_H
+#define FF_COM_H
 
 #include "shim.h"
 

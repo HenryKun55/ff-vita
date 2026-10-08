@@ -8,8 +8,8 @@
  * game goes on changing g_rs. Without the render thread the commands run at once.
  *
  * Include after the GL headers. */
-#ifndef IGI_RENDER_BACKEND_H
-#define IGI_RENDER_BACKEND_H
+#ifndef FF_RENDER_BACKEND_H
+#define FF_RENDER_BACKEND_H
 
 #include "render.h"
 
@@ -69,7 +69,7 @@ typedef struct DrawCmd {
     /* D3D render states (by number) */
     uint32_t zenable, fillmode, shademode, zwrite, alphatest, srcblend, destblend, cullmode, zfunc, alpharef,
         alphafunc, blend, fog, fogcolor, fogtablemode, fogstart, fogend, fogdensity, colorkey, lighting,
-        fogvertexmode, tfactor;
+        fogvertexmode, tfactor, zbias;
     DrawStage stage[MAX_STAGES];
     /* transforms (not for pre-transformed draws) */
     int32_t vp_x, vp_y, vp_w, vp_h;

@@ -964,7 +964,7 @@ static void apply_states(const DrawCmd *d)
 {
     /* Two key buffers used in turn: the new key is written where the one before
      * the last was (a copy of the key would be a SceLibc memcpy call). */
-    enum { N = 26 };
+    enum { N = 27 };
     static uint32_t keys[2][N], changes_after;
     static int last, valid;
     uint32_t *k = keys[last ^ 1];
@@ -995,6 +995,7 @@ static void apply_states(const DrawCmd *d)
     k[23] = (uint32_t)d->L.use_fog;
     k[24] = (uint32_t)B.diag;
     k[25] = (uint32_t)B.cull_override;
+    k[26] = d->zbias;
     const int lit = !d->L.pretransformed && d->lighting && d->L.has_normal;
     uint32_t diff = !valid || changes_after != rs_changes || (lit && light_in_new);
     for (int i = 0; i < N; i++)
@@ -1020,6 +1021,14 @@ static void apply_states_now(const DrawCmd *d)
         glDisable(GL_DEPTH_TEST);
     }
     glDepthMask(d->zwrite ? GL_TRUE : GL_FALSE);
+    /* D3DRS_ZBIAS (0..16): coplanar decals (shadows, dirt) drawn over a surface
+     * win the depth test. */
+    if (d->zbias && !pretransformed) {
+        glEnable(GL_POLYGON_OFFSET_FILL);
+        glPolygonOffset(-1.0f, -2.0f * (float)d->zbias);
+    } else {
+        glDisable(GL_POLYGON_OFFSET_FILL);
+    }
     if (d->blend) {
         glEnable(GL_BLEND);
         uint32_t sb = d->srcblend, db = d->destblend;

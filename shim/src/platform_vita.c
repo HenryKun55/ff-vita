@@ -1,5 +1,5 @@
 /* PlayStation Vita implementation of the platform layer: vitaGL for video,
- * sceCtrl and the touch panels sent through IGI's key bindings, SDL for audio. */
+ * sceCtrl and the touch panels sent as the game's key and mouse input, SDL for audio. */
 #if defined(__vita__)
 #include "platform.h"
 #include "bench.h"
@@ -108,7 +108,7 @@ static void boot_picture_show(void)
         rt_log("boot picture: menusystem/loadingscreen.res not usable");
         return;
     }
-    SceUID block = sceKernelAllocMemBlock("igi_boot_fb", SCE_KERNEL_MEMBLOCK_TYPE_USER_CDRAM_RW, BOOT_FB_SIZE, NULL);
+    SceUID block = sceKernelAllocMemBlock("ff_boot_fb", SCE_KERNEL_MEMBLOCK_TYPE_USER_CDRAM_RW, BOOT_FB_SIZE, NULL);
     void *base = NULL;
     if (block < 0 || sceKernelGetMemBlockBase(block, &base) < 0) {
         free(pic);
@@ -203,7 +203,7 @@ static int exit_watchdog(SceSize args, void *argp)
  * should that never finish (a stuck GPU job), a watchdog ends the process anyway. */
 void platform_shutdown(void)
 {
-    SceUID w = sceKernelCreateThread("igi_exit_watchdog", exit_watchdog, 0x10000100, 0x4000, 0, 0, NULL);
+    SceUID w = sceKernelCreateThread("ff_exit_watchdog", exit_watchdog, 0x10000100, 0x4000, 0, 0, NULL);
     if (w >= 0)
         sceKernelStartThread(w, 0, NULL);
     render_shutdown();
@@ -256,21 +256,11 @@ void platform_swap(void)
 }
 
 /* ---- controls -----------------------------------------------------------
- * Every button, the left stick's four directions and the rear panel's halves
- * are keys of their own that the player binds in Options -> Controls; in the
- * menus they work as a console's (pad_input.c). Defaults (runtime/src/igi_controls.c):
+ * The buttons, the left stick's four directions and the rear panel's halves are
+ * controls; pad_input.c turns each into the key or mouse input of its action's
+ * default PC binding (the layout is listed there).
  *
- *   left stick  move / strafe          right stick  look (mouse)
- *   R  fire                            L  crouch
- *   X  jump                            O  activate
- *   [] reload                          /\ next weapon
- *   up  binoculars                     down  walk / run
- *   left  previous weapon              right  map computer
- *   SELECT  peek                       START  Esc (menu), not bindable
- *   rear touch   upper half zoom in, lower half zoom out (scope, binoculars)
- *   front touch  drag to look; in the menus, tap to click
- *
- * igi.cfg: front_touch=0 / rear_touch=0 turn a touch panel off;
+ * ff.cfg: front_touch=0 / rear_touch=0 turn a touch panel off;
  * stick_sensitivity=<multiplier> scales the right stick in gameplay (default 1.0;
  * the menu cursor speed is fixed). */
 
@@ -336,11 +326,11 @@ static void mouse_motion(int32_t mx, int32_t my)
 static int front_touch_on = 1, rear_touch_on = 1, aspect_keep;
 static int rear_mid_y = 544;     /* rear panel: above = zoom in, below = zoom out */
 static int front_w = 1920, front_h = 1088;
-static float stick_sensitivity = 1.0f;   /* igi.cfg stick_sensitivity= */
+static float stick_sensitivity = 1.0f;   /* ff.cfg stick_sensitivity= */
 
 static void touch_init(void)
 {
-    FILE *f = fopen("ux0:data/igi/igi.cfg", "r");
+    FILE *f = fopen("ux0:data/ff/ff.cfg", "r");
     if (f) {
         char line[128];
         while (fgets(line, sizeof(line), f)) {
@@ -505,7 +495,7 @@ void platform_pump(void)
         if (down != ((prev_buttons & b) != 0))
             pad_control(button_map[i].control, down);
     }
-    /* Debug combos, only with the performance overlay on (overlay=1 in igi.cfg). */
+    /* Debug combos, only with the performance overlay on (overlay=1 in ff.cfg). */
     const uint32_t diag = SCE_CTRL_LTRIGGER | SCE_CTRL_RTRIGGER | SCE_CTRL_SELECT;
     const int debug = render_overlay_enabled();
     if (debug && (pad.buttons & diag) == diag && (prev_buttons & diag) != diag)

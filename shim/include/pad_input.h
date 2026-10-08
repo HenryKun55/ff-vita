@@ -1,11 +1,6 @@
-/* Game controls driven by a pad (the Vita's buttons, sticks and touch panels).
- *
- * In play every control is a key of its own (IGI_VK_*, runtime/include/igi_controls.h)
- * that the player binds to IGI's actions in Options -> Controls; the game's
- * binding table does the mapping. In the menus the controls work like a
- * console's: D-pad and left stick = arrow keys, Cross = Enter, Circle = Esc
- * (back); while the controls screen waits for a key they send their own keys
- * again, so that pressing a control binds it. Start is always Esc. */
+/* Game controls driven by a pad (the Vita's buttons, sticks and touch panels):
+ * each control presses the key, mouse button or wheel step that the game's
+ * default PC bindings give its action (shim/src/pad_input.c). Start is Esc. */
 #ifndef PAD_INPUT_H
 #define PAD_INPUT_H
 

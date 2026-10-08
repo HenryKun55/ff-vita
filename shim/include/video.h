@@ -1,6 +1,6 @@
 /* Video frame decoding for the AVI cutscenes (Indeo Video 5). */
-#ifndef IGI_VIDEO_H
-#define IGI_VIDEO_H
+#ifndef FF_VIDEO_H
+#define FF_VIDEO_H
 
 #include <stddef.h>
 #include <stdint.h>

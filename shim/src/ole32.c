@@ -1,5 +1,6 @@
-/* ole32.dll: COM runtime. IGI only instantiates DirectMusic, as part of its
- * DirectX version check, so a bare IDirectMusic object is enough. */
+/* ole32.dll: COM runtime. The only classes are a bare IDirectMusic (a DirectX
+ * version check some games make); Freedom Fighters' movie player asks for
+ * DirectShow's AMMultiMediaStream, gets REGDB_E_CLASSNOTREG and skips the movie. */
 #include "com.h"
 
 SHIM(ole32, CoInitialize) { stdcall_ret(c, S_OK, 1); }

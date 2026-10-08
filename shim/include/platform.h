@@ -1,6 +1,6 @@
 /* Host platform layer (SDL2): window, GL context, input state, audio device. */
-#ifndef IGI_PLATFORM_H
-#define IGI_PLATFORM_H
+#ifndef FF_PLATFORM_H
+#define FF_PLATFORM_H
 
 #include <stdint.h>
 
@@ -55,7 +55,7 @@ void platform_push_key(uint8_t dik, int down);
 /* Key press/release as from a keyboard: DirectInput state + buffer and, for the
  * menu keys (Esc, Enter, arrows), the matching Win32 key messages. */
 void platform_key(uint8_t dik, int down);
-/* Feed IGI_INPUT scripted events (testing aid); called from platform_pump. */
+/* Feed FF_INPUT scripted events (testing aid); called from platform_pump. */
 void platform_scripted_input(void);
 
 /* Mouse: accumulated relative motion since the last read, absolute position, buttons. */

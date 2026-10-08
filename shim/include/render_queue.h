@@ -1,7 +1,7 @@
 /* Render thread: GL calls recorded by the game thread, replayed on another core.
  *
- * With the render thread on (the default; render_thread=0 in igi.cfg or
- * IGI_RENDER_THREAD=0 turns it off) every GL call of the renderer goes through
+ * With the render thread on (the default; render_thread=0 in ff.cfg or
+ * FF_RENDER_THREAD=0 turns it off) every GL call of the renderer goes through
  * a q_gl* wrapper that appends it to the current frame's command stream; a
  * thread on another core owns the GL context and executes the stream. The game
  * thread runs at most one frame ahead of it. Off, the wrappers call GL directly.
@@ -18,8 +18,8 @@
  *  - GL names from glGenTextures/glGenBuffers are the recorder's own and only
  *    mean something to the wrappers.
  */
-#ifndef IGI_RENDER_QUEUE_H
-#define IGI_RENDER_QUEUE_H
+#ifndef FF_RENDER_QUEUE_H
+#define FF_RENDER_QUEUE_H
 
 #include <stddef.h>
 #include <stdint.h>

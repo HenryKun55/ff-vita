@@ -40,16 +40,16 @@ extern uint64_t win32_perf_counter(void);   /* microseconds */
 
 /* Timestamps for the per-section draw counters (DS/DT/DP/DG/DO on the overlay).
  * Each is a system call on the Vita and a draw takes several: off unless
- * IGI_FINE_TIMING=1 (desktop) or fine_timing=1 in igi.cfg (Vita). */
+ * FF_FINE_TIMING=1 (desktop) or fine_timing=1 in ff.cfg (Vita). */
 static int fine_timing = -1;
 
 static uint64_t fine_now(void)
 {
     if (fine_timing < 0) {
-        const char *e = getenv("IGI_FINE_TIMING");
+        const char *e = getenv("FF_FINE_TIMING");
         fine_timing = e && e[0] == '1';
 #if defined(__vita__)
-        FILE *f = fopen("ux0:data/igi/igi.cfg", "r");
+        FILE *f = fopen("ux0:data/ff/ff.cfg", "r");
         if (f) {
             char buf[128];
             while (fgets(buf, sizeof(buf), f))
@@ -63,7 +63,7 @@ static uint64_t fine_now(void)
 }
 
 /* Same for the draw front end: never on the render thread (the pack thread), whose
- * clock queries would change the game's (IGI_FAKE_CLOCK advances per query). */
+ * clock queries would change the game's (FF_FAKE_CLOCK advances per query). */
 static uint64_t fine_now_fe(void)
 {
     return g_pack_thread ? 0u : fine_now();
@@ -122,7 +122,7 @@ static uint32_t rs_gpu_draws;
 /* Published at the end of each executed frame, collected by the game thread. */
 static _Atomic uint32_t rs_pub_gpu_draws, rs_pub_verts, rs_pub_indices, rs_pub_pack_us;
 
-static int batch_enabled = -1;      /* IGI_BATCH=0: no draw batching */
+static int batch_enabled = -1;      /* FF_BATCH=0: no draw batching */
 
 /* Game thread (pack thread on). */
 static int pk_pending;                /* draws recorded since the last flush command */
@@ -191,7 +191,7 @@ static int fb_w = 640, fb_h = 480;       /* drawable size in pixels */
 static int vp_x, vp_y, vp_w = 640, vp_h = 480;   /* game image inside the drawable (aspect kept) */
 
 /* Output framing: 1 = stretch to fill the display, 0 = keep 4:3 with black bars.
- * IGI_ASPECT=fill|keep on desktop, "aspect=fill|keep" in ux0:data/igi/igi.cfg on the Vita. */
+ * FF_ASPECT=fill|keep on desktop, "aspect=fill|keep" in ux0:data/ff/ff.cfg on the Vita. */
 static int aspect_fill = -1;
 
 /* Culling override for diagnosis: 0 normal, 1 off, 2 flipped (cull=off|flip). */
@@ -223,7 +223,7 @@ void render_diag_cycle(void)
     g_tex_epoch++;
     rt_log("diagnostic mode %d: %s", diag_mode, diag_names[diag_mode]);
 }
-/* 1: remap D3D clip z [0,w] to GL [-w,w] (desktop GL). zremap=0 in igi.cfg disables it.
+/* 1: remap D3D clip z [0,w] to GL [-w,w] (desktop GL). zremap=0 in ff.cfg disables it.
  * GXM clips z to [0,w] like D3D, so on the Vita the remap would clip away the
  * near half of the depth range: clip z stays in D3D form there and the depth
  * range is widened instead (see d3d_depth_range). */
@@ -235,12 +235,12 @@ static int z_remap = 1;
 
 static void load_aspect_setting(void)
 {
-    const char *v = getenv("IGI_ASPECT");
-    const char *cv = getenv("IGI_CULL");
+    const char *v = getenv("FF_ASPECT");
+    const char *cv = getenv("FF_CULL");
 #if defined(__vita__)
     aspect_fill = 1;
     static char line[128], cline[128];
-    FILE *f = fopen("ux0:data/igi/igi.cfg", "r");
+    FILE *f = fopen("ux0:data/ff/ff.cfg", "r");
     if (f) {
         char buf[128];
         while (fgets(buf, sizeof(buf), f)) {
@@ -346,7 +346,7 @@ static volatile uint32_t render_thread_prof;
 #endif
 
 /* The pack thread needs a front end that records each draw with
- * render_pk_prepare (IGI's D3D7 one did); the D3D8 front end draws through
+ * render_pk_prepare (a D3D7 front end did); the D3D8 front end draws through
  * render_draw on the game thread, so it is off unless FF_PACK_THREAD=1. */
 static int want_pack_thread(void)
 {
@@ -367,7 +367,7 @@ void render_init(int w, int h)
         pack_decided = 1;
         g_pack_thread = rq_on && want_pack_thread();
         rt_log("pack thread: %s", g_pack_thread ? "on" : "off");
-        const char *e = getenv("IGI_BATCH");
+        const char *e = getenv("FF_BATCH");
         batch_enabled = !(e && e[0] == '0');
 #if defined(__vita__)
         /* The render thread only rotates the arena: its GPU memory and buffer
@@ -446,14 +446,14 @@ void render_begin_frame(void)
 static int shot_hold = -1;   /* benchmark frame to hold on screen after its swap */
 #endif
 
-/* IGI_SHOT=N: save every Nth presented frame as shot_<frame>.bmp (debugging aid); the
+/* FF_SHOT=N: save every Nth presented frame as shot_<frame>.bmp (debugging aid); the
  * benchmark's screenshots go to bench_shot_<measured frame>.bmp. */
 static void maybe_screenshot(void)
 {
     static int every = -1;
     static unsigned frame;
     if (every < 0) {
-        const char *e = getenv("IGI_SHOT");
+        const char *e = getenv("FF_SHOT");
         every = e ? atoi(e) : 0;
     }
     frame++;
@@ -476,7 +476,7 @@ static void maybe_screenshot(void)
     glReadPixels(0, 0, fb_w, fb_h, GL_BGRA, GL_UNSIGNED_BYTE, px);
     char name[640];
 #if defined(__vita__)
-    const char *dir = "ux0:data/igi/";
+    const char *dir = "ux0:data/ff/";
 #else
     const char *dir = "";
 #endif
@@ -513,11 +513,11 @@ void render_present(void)
     if (g_pack_thread)
         rq_exec(pk_frame_cmd, NULL, 0);
     g_frame_serial++;
-    /* IGI_TRACE_EVERY=N: trace (log every draw + save the image of) every Nth frame. */
+    /* FF_TRACE_EVERY=N: trace (log every draw + save the image of) every Nth frame. */
     static int trace_every = -1;
     static unsigned present_count;
     if (trace_every < 0) {
-        const char *e = getenv("IGI_TRACE_EVERY");
+        const char *e = getenv("FF_TRACE_EVERY");
         trace_every = e ? atoi(e) : 0;
     }
     if (trace_every > 0 && ++present_count % (unsigned)trace_every == 0 && !g_trace_next_frame)
@@ -538,8 +538,8 @@ void render_present(void)
     if (shot_hold >= 0) {
         rq_sync();                       /* the render thread has swapped it */
         sceKernelDelayThread(1000000);   /* until the frame is on screen */
-        /* A file of its own: Vita3K only writes igi.log out when it is closed. */
-        FILE *f = fopen("ux0:data/igi/bench_shot_now.txt", "w");
+        /* A file of its own: Vita3K only writes ff.log out when it is closed. */
+        FILE *f = fopen("ux0:data/ff/bench_shot_now.txt", "w");
         if (f) {
             fprintf(f, "%d\n", shot_hold);
             fclose(f);
@@ -1576,6 +1576,7 @@ static void fill_state(DrawCmd *d, const DrawStage *stages, int with_transforms)
     d->tfactor = rs[60];
     d->lighting = rs[137];
     d->fogvertexmode = rs[140];
+    d->zbias = rs[47];
     d->stage[0] = stages[0];
     d->stage[1] = stages[1];
     if (with_transforms) {
@@ -1764,7 +1765,7 @@ static void draw_now(int prim, const RVertex *v, uint32_t nv, const uint16_t *id
 
 /* A (near) zero rhw makes w effectively infinite. Hardware of the era interpolates
  * colors perspective-correctly (attribute * rhw), so such primitives come out fully
- * transparent. IGI's cutscenes submit an overlay with rhw left as garbage/zero. */
+ * transparent; games relied on that for overlays with rhw left as garbage/zero. */
 static int rhw_invisible(int prim, const RVertex *v, uint32_t nv)
 {
     float min_rhw = 1e30f, max_rhw = 0.0f;
@@ -1786,7 +1787,7 @@ static int rhw_invisible(int prim, const RVertex *v, uint32_t nv)
 /* ---- draw batching --------------------------------------------------------
  * Consecutive triangle draws with identical render state are merged into one
  * indexed triangle list: on the Vita every draw costs a round of vitaGL/GXM
- * state setup. IGI_BATCH=0 disables it.
+ * state setup. FF_BATCH=0 disables it.
  */
 static uint32_t batch_nv, batch_ni;
 static uint32_t batch_serial;
@@ -1797,7 +1798,7 @@ static int batch_active;
  * Per-frame averages over one second: total frame time, time spent submitting
  * draws to GL (D: render_draw plus batch flushes triggered elsewhere), time
  * blocked in the buffer swap, and the rest (game code), plus the counters in
- * pc_frame. Enabled by default on the Vita; IGI_OVERLAY=1 on desktop.
+ * pc_frame. Enabled by default on the Vita; FF_OVERLAY=1 on desktop.
  */
 static struct {
     uint64_t draw_us, swap_us, frame_start;
@@ -2136,7 +2137,7 @@ static void batch_draw_impl(int prim, const RVertex *v, uint32_t nv, const uint1
     if ((cur_diag() == DIAG_NO_SCREEN && pretransformed) || (cur_diag() == DIAG_NO_3D && !pretransformed))
         return;
     if (batch_enabled < 0) {
-        const char *e = getenv("IGI_BATCH");
+        const char *e = getenv("FF_BATCH");
         batch_enabled = !(e && e[0] == '0');
     }
     /* Vertices made by near-plane clipping, drawn after the draw's own (nex of them). */
@@ -2541,7 +2542,7 @@ int render_draw_guest(int prim, const GuestVerts *g, uint32_t nv, const uint16_t
     if (nv > BATCH_MAX_V || tris * 3u > BATCH_MAX_I)
         return 0;
     if (batch_enabled < 0) {
-        const char *e = getenv("IGI_BATCH");
+        const char *e = getenv("FF_BATCH");
         batch_enabled = !(e && e[0] == '0');
     }
     if (!batch_enabled)
@@ -2706,7 +2707,7 @@ int render_draw_dynvb(uint32_t lock_id, uint32_t start, const GuestVerts *g, uin
         ((uintptr_t)idx & 1u) || cur_trace() || cur_diag() != DIAG_NONE)
         return 0;
     if (batch_enabled < 0) {
-        const char *e = getenv("IGI_BATCH");
+        const char *e = getenv("FF_BATCH");
         batch_enabled = !(e && e[0] == '0');
     }
     if (!batch_enabled || ni < 3u)
@@ -3104,10 +3105,10 @@ int render_overlay_enabled(void)
 static void perf_frame_begin_swap(void)
 {
     if (perf.enabled < 0) {
-        const char *e = getenv("IGI_OVERLAY");
+        const char *e = getenv("FF_OVERLAY");
 #if defined(__vita__)
         perf.enabled = e && e[0] == '1';
-        FILE *f = fopen("ux0:data/igi/igi.cfg", "r");   /* overlay=1 shows it */
+        FILE *f = fopen("ux0:data/ff/ff.cfg", "r");   /* overlay=1 shows it */
         if (f) {
             char buf[128];
             while (fgets(buf, sizeof(buf), f))
@@ -3165,7 +3166,7 @@ static void perf_frame_begin_swap(void)
             perf.acc_pc[i] = 0;
         }
         const float *a = perf.avg_pc;
-        /* Once a second into igi.log, only while measuring: each log line is
+        /* Once a second into ff.log, only while measuring: each log line is
          * flushed to the memory card, which can stall the game on the Vita. */
         if (perf.enabled || bench_enabled()) {
         rt_log("perf: %.1f fps, frame %.1f ms = game %.1f + draw %.1f + swap %.1f, %u draws -> %u gpu draws; "

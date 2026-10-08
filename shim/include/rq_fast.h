@@ -1,6 +1,6 @@
 /* Inline fast path of the render queue's rq_begin/rq_end (render_queue.c). */
-#ifndef IGI_RQ_FAST_H
-#define IGI_RQ_FAST_H
+#ifndef FF_RQ_FAST_H
+#define FF_RQ_FAST_H
 
 #include <stddef.h>
 #include <stdint.h>

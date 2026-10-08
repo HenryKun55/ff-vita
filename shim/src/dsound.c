@@ -62,7 +62,7 @@ static int trace_sound(void)
 {
     static int t = -1;
     if (t < 0)
-        t = getenv("IGI_TRACE_SOUND") != NULL;
+        t = getenv("FF_TRACE_SOUND") != NULL;
     return t;
 }
 
@@ -212,10 +212,10 @@ static void mix(void *userdata, Uint8 *stream, int len)
         else if (out[f] < -1.0f)
             out[f] = -1.0f;
     }
-    /* IGI_BENCH_MUTE=1 silences benchmark runs (the mixing work above still happens). */
+    /* FF_BENCH_MUTE=1 silences benchmark runs (the mixing work above still happens). */
     static int muted = -1;
     if (muted < 0) {
-        const char *e = getenv("IGI_BENCH_MUTE");
+        const char *e = getenv("FF_BENCH_MUTE");
         muted = bench_enabled() && e && e[0] == '1';
     }
     if (muted)

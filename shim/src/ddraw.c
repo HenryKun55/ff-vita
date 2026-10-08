@@ -1039,7 +1039,7 @@ static void dd_GetDeviceIdentifier(Ctx *c)
     uint32_t p = ARG(1);
     memset(gptr(p), 0, 1072);
     snprintf((char *)g_mem + p, 512, "display");
-    snprintf((char *)g_mem + p + 512u, 512, "IGI GL renderer");
+    snprintf((char *)g_mem + p + 512u, 512, "FF GL renderer");
     stdcall_ret(c, DD_OK, 3);
 }
 
