@@ -345,13 +345,26 @@ extern uint32_t vgl_prof_base __attribute__((weak));
 static volatile uint32_t render_thread_prof;
 #endif
 
-/* The pack thread needs a front end that records each draw with
- * render_pk_prepare (a D3D7 front end did); the D3D8 front end draws through
- * render_draw on the game thread, so it is off unless FF_PACK_THREAD=1. */
+/* The pack thread is on with the render thread unless pack_thread=0 (ff.cfg) or
+ * FF_PACK_THREAD=0: the D3D8 front end records its draws (render_pk_prepare)
+ * and the render thread decodes and packs them. */
 static int want_pack_thread(void)
 {
+    int on = 1;
     const char *e = getenv("FF_PACK_THREAD");
-    return e && e[0] == '1';
+    if (e)
+        on = e[0] != '0';
+#if defined(__vita__)
+    FILE *f = fopen("ux0:data/ff/ff.cfg", "r");
+    if (f) {
+        char buf[128];
+        while (fgets(buf, sizeof(buf), f))
+            if (strncmp(buf, "pack_thread=", 12) == 0)
+                on = buf[12] != '0';
+        fclose(f);
+    }
+#endif
+    return on;
 }
 
 #if defined(__vita__)

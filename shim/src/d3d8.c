@@ -527,12 +527,63 @@ static uint16_t *index_scratch(uint32_t n)
  * relative to va). */
 static int offscreen(void);
 
+/* ---- pack thread (render.h) ----------------------------------------------------
+ * With it on, a draw is recorded: the state snapshot (render_pk_prepare), then a
+ * copy of the game's vertex bytes and the rebased indices; the render thread
+ * decodes and draws them. The game thread only copies. */
+
+typedef struct PkDraw {
+    uint32_t prim, fvf, stride, nv, ni;
+    uint8_t diag, trace;
+    const uint8_t *verts;      /* copied vertices (frame memory) */
+    const uint16_t *idx;       /* copied indices, NULL: none */
+} PkDraw;
+
+/* Render thread. */
+static void pk_exec(const void *p)
+{
+    const PkDraw *c = p;
+    render_pk_draw_begin(c->diag, c->trace);
+    Decoded d;
+    RVertex *v = decode(c->fvf, c->verts, c->stride, c->nv, &d);
+    render_draw((int)c->prim, v, c->nv, c->idx, c->ni, d.pretransformed, d.has_normal, d.has_color, d.has_spec, d.ntex);
+}
+
+static void pk_record(uint32_t prim, uint32_t va, uint32_t stride, uint32_t nv, const uint16_t *idx, uint32_t ni)
+{
+    uint8_t *v = rq_data((size_t)nv * stride);
+    memcpy(v, g_mem + va, (size_t)nv * stride);
+    uint16_t *ic = NULL;
+    if (idx && ni) {
+        ic = rq_data((size_t)ni * sizeof(uint16_t));
+        memcpy(ic, idx, (size_t)ni * sizeof(uint16_t));
+    }
+    uint32_t fvf = dev.fvf;
+    render_pk_prepare((fvf & 0x0Eu) == 0x4u, (fvf & 0x10u) != 0);
+    PkDraw *c = rq_begin_fast(pk_exec, sizeof(PkDraw));
+    c->prim = prim;
+    c->fvf = fvf;
+    c->stride = stride;
+    c->nv = nv;
+    c->ni = ic ? ni : 0;
+    c->diag = (uint8_t)render_diag_mode();
+    c->trace = g_trace_next_frame == 2;
+    c->verts = v;
+    c->idx = ic;
+    rq_end_fast();
+    render_pk_recorded();
+}
+
 static void draw_verts(uint32_t prim, uint32_t va, uint32_t stride, uint32_t nv, const uint16_t *idx, uint32_t ni)
 {
     if (!nv || dev.fvf & 1u || offscreen())
         return;
     if (!stride)
         stride = fvf_stride(dev.fvf);
+    if (g_pack_thread) {
+        pk_record(prim, va, stride, nv, idx, ni);
+        return;
+    }
     Decoded d;
     RVertex *v = decode(dev.fvf, g_mem + va, stride, nv, &d);
     render_draw((int)prim, v, nv, idx, ni, d.pretransformed, d.has_normal, d.has_color, d.has_spec, d.ntex);
