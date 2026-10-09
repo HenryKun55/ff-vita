@@ -456,6 +456,16 @@ static inline __attribute__((always_inline)) void rt_fill_small(uint8_t *d, uint
 #endif
 }
 
+/* Guest range of the vertex buffers whose writes must be reported
+ * (d3d_mem_written, shim/src/d3d8.c): block copies and fills into it report. */
+extern uint32_t rt_wr_lo, rt_wr_hi;
+void d3d_mem_written(uint32_t addr, uint32_t len);
+#define RT_REPORT_WRITE(a, n) \
+    do { \
+        if ((a) < rt_wr_hi && (a) + (n) > rt_wr_lo) \
+            d3d_mem_written((a), (n)); \
+    } while (0)
+
 static inline __attribute__((always_inline)) RtStr rt_rep_movs(uint8_t *gm, uint32_t df, uint32_t n, uint32_t si, uint32_t di, uint32_t size)
 {
     uint32_t b = n * size;
@@ -475,6 +485,7 @@ static inline __attribute__((always_inline)) RtStr rt_rep_movs(uint8_t *gm, uint
     } else {
         memmove(gm + di, gm + si, b);
     }
+    RT_REPORT_WRITE(di, b);
     RtStr r = { 0, si + b, di + b };
     return r;
 }
@@ -496,6 +507,7 @@ static inline __attribute__((always_inline)) RtStr rt_rep_stos(uint8_t *gm, uint
         for (uint32_t i = 0; i < b; i += 4u)
             rt_st32(gm + di + i, v);
     }
+    RT_REPORT_WRITE(di, b);
     RtStr r = { 0, 0, di + b };
     return r;
 }

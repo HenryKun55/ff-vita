@@ -247,6 +247,7 @@ SHIM(msvcrt, __3_YAXPAX_Z)
 SHIM(msvcrt, memmove)
 {
     memmove(g_mem + ARG(0), g_mem + ARG(1), ARG(2));
+    RT_REPORT_WRITE(ARG(0), ARG(2));
     cdecl_ret(c, ARG(0));
 }
 

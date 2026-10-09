@@ -97,6 +97,8 @@ NATIVE = {
     # Vertex colours into the lighting factors, and the lit colours back (runtime/src/native_vcolor.c).
     0x00691410: ('rt_native_colors_in', [(0x00691410, 413, 'a1401185b69977956634161713acd5dfcaab5386')]),
     0x006915B0: ('rt_native_colors_out', [(0x006915B0, 304, '78b1f8422fece34b16771082210a98e851f7de45')]),
+    # Visibility of a list of objects against the view planes and portal groups (runtime/src/native_cull.c).
+    0x0058DE80: ('rt_native_cull', [(0x0058DE80, 2388, '649e81c2292270774e5eba80ea6098caaf09d4e4')]),
     # Unlit vertices into the lit-vertex buffer, colour halved (runtime/src/native_vcolor.c).
     0x00690D20: ('rt_native_copy_unlit', [(0x00690D20, 106, 'c97b35c903f9ca890ebeb8d2103af646509f5030')]),
 }

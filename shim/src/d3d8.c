@@ -830,6 +830,8 @@ typedef struct Mirror {
     uint32_t frame;                     /* frame of the stamps */
     uint8_t stamp;
     int conflict;                       /* this frame: draws copy their vertices */
+    int unsafe;                         /* a write was not reported: draws copy from now on */
+    uint32_t draw_no;                   /* draws read this frame (the checked slice) */
 } Mirror;
 static Mirror *mirrors[MIRRORS];
 static uint32_t mirror_lo = 0xFFFFFFFFu, mirror_hi;   /* guest range of all mirrored buffers */
@@ -847,6 +849,8 @@ static void mirror_bounds(void)
             if (mirrors[i]->mem + mirrors[i]->size > mirror_hi)
                 mirror_hi = mirrors[i]->mem + mirrors[i]->size;
         }
+    rt_wr_lo = mirror_lo;
+    rt_wr_hi = mirror_hi;
 }
 
 static void mirror_drop(Buffer8 *b)
@@ -964,8 +968,9 @@ static const uint8_t *mirror_read(Mirror *m, uint32_t voff, uint32_t bytes)
         m->frame = f;
         m->stamp = (uint8_t)(m->stamp % 255u + 1u);
         m->conflict = 0;
+        m->draw_no = 0;
     }
-    if (m->conflict)
+    if (m->conflict || m->unsafe)
         return NULL;
     if (m->full[p]) {
         if (mirror_drawn(m, 0, m->size)) {
@@ -992,6 +997,17 @@ static const uint8_t *mirror_read(Mirror *m, uint32_t voff, uint32_t bytes)
         st_mirror_bytes += n;
     }
     m->npend[p] = 0;
+    /* Safety net: one draw in 16, a different slice every frame, compared with
+     * the buffer. A difference is a write nobody reported: stop mirroring it. */
+    if ((m->draw_no++ & 15u) == (f & 15u) && memcmp(m->m[p] + voff, g_mem + m->mem + voff, bytes)) {
+        uint32_t at = 0;
+        while (at < bytes && m->m[p][voff + at] == g_mem[m->mem + voff + at])
+            at++;
+        rt_log("d3d8: vertex buffer %08X changed at +%u without a report; drawn with copies from now on",
+               m->mem, voff + at);
+        m->unsafe = 1;
+        return NULL;
+    }
     memset(m->drawn + voff / MIRROR_GRAIN, m->stamp,
            (voff + bytes + MIRROR_GRAIN - 1u) / MIRROR_GRAIN - voff / MIRROR_GRAIN);
     st_mirror_draws++;

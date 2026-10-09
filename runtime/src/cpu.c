@@ -226,9 +226,13 @@ found:
 
 /* Element by element, as the CPU does: needed for backward copies and for a
  * destination overlapping ahead of the source (pattern replication). */
+uint32_t rt_wr_lo = 0xFFFFFFFFu, rt_wr_hi;
+
 RtStr rt_rep_movs_slow(uint8_t *gm, uint32_t df, uint32_t n, uint32_t si, uint32_t di, uint32_t size)
 {
     uint32_t step = df ? 0u - size : size;
+    if (n)
+        RT_REPORT_WRITE(df ? di - (n - 1u) * size : di, n * size);
     for (; n; n--) {
         if (size == 1)
             gm[di] = gm[si];
@@ -246,6 +250,8 @@ RtStr rt_rep_movs_slow(uint8_t *gm, uint32_t df, uint32_t n, uint32_t si, uint32
 RtStr rt_rep_stos_slow(uint8_t *gm, uint32_t df, uint32_t n, uint32_t di, uint32_t v, uint32_t size)
 {
     uint32_t step = df ? 0u - size : size;
+    if (n)
+        RT_REPORT_WRITE(df ? di - (n - 1u) * size : di, n * size);
     for (; n; n--) {
         if (size == 1)
             gm[di] = (uint8_t)v;
