@@ -99,6 +99,14 @@ NATIVE = {
     0x006915B0: ('rt_native_colors_out', [(0x006915B0, 304, '78b1f8422fece34b16771082210a98e851f7de45')]),
     # Visibility of a list of objects against the view planes and portal groups (runtime/src/native_cull.c).
     0x0058DE80: ('rt_native_cull', [(0x0058DE80, 2388, '649e81c2292270774e5eba80ea6098caaf09d4e4')]),
+    # Vector transforms up the scene graph's parent chain (runtime/src/native_xform.c).
+    0x006071C0: ('rt_native_rotate_up', [(0x006071C0, 110, 'cf049892e882cdbc0542f3e95d0437719f5eae2c')]),
+    0x00607120: ('rt_native_transform_up', [(0x00607120, 155, '3616e9c1428825db35a50f0c9dc372e6e2d11feb')]),
+    0x00606F80: ('rt_native_unrotate_down', [(0x00606F80, 118, '527ef497dfcb77b94e4145aed260a76c262afe31')]),
+    0x00606ED0: ('rt_native_untransform_down', [(0x00606ED0, 171, '8dc046629ab41aa8f5b390e3f5ea9d9bf4e4f862')]),
+    0x006067D0: ('rt_native_to_world', [(0x006067D0, 513, 'a510ca21ec2aa0abb3496ee1cce6368607ebae67')]),
+    0x006065D0: ('rt_native_to_local', [(0x006065D0, 506, 'ea70591e177f15f028152800e9b6f5534a01d2c8')]),
+    0x006069E0: ('rt_native_world_frame', [(0x006069E0, 545, 'cf5477da43c335ce2e5a9333bc28e55a99219a86')]),
     # Unlit vertices into the lit-vertex buffer, colour halved (runtime/src/native_vcolor.c).
     0x00690D20: ('rt_native_copy_unlit', [(0x00690D20, 106, 'c97b35c903f9ca890ebeb8d2103af646509f5030')]),
 }
