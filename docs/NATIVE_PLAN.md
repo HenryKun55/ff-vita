@@ -65,7 +65,8 @@ scripts are anchored on a later key press and checked by screenshot):
 | 0x006071C0, 0x00607120, 0x00606F80, 0x00606ED0, 0x006067D0, 0x006065D0, 0x006069E0 | scene graph transforms up/down the parent chain | ~4% | native; 1.86M calls checked (float cancellation only) |
 | 0x005D5D30 | rdtsc timing wrapper (its cost is the clock read) | 1.7% | left alone: timing is not touched |
 | 0x005FDEA0 | oriented box overlap (15 separating axes) | 1.7% | native; 420k calls checked, identical |
-| 0x00691CF0, 0x006924C0, 0x00692860, 0x00692470 | mesh submit around the lighting | ~4% | next |
+| 0x00691CF0 ("UpdateStrip") | keyframe vertex tween before the lighting | 1.7% | tween loop native; 16k calls checked: colours exact, floats within a few ulps (double vs float) |
+| 0x006924C0, 0x00692860, 0x00692470 | mesh submit around the lighting | ~2.3% | next |
 | 0x00407110, 0x00410CC0 | (to identify) | ~2.8% | next |
 | 0x00698E80, 0x006164F0, 0x00616B70, 0x00614AC0 | octree / scene graph | ~2.7% | next |
 | 0x005F8A90, 0x005F87F0 | vector / matrix helpers | ~1.3% | next |

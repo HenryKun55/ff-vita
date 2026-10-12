@@ -119,6 +119,9 @@ BLOCK_HOOKS = {
     # Character skinning loop of 0x00694BF0, its x87 path (runtime/src/native_skin.c).
     0x006953F3: ('rt_block_skin', 0x00695586, [(0x006953F3, 403, '63fefc0c4355aa81aac27d41265338bca7691cbc')]),    # Particle quads of 0x006959D0 (runtime/src/native_particles.c).
     0x00695E50: ('rt_block_particles', 0x006960BB, [(0x00695E50, 619, 'efb47c749f97e4c245aab39de078ff8ff78ef1dd')]),
+    # Vertex tween loop of UpdateStrip 0x00691CF0 (runtime/src/native_tween.c), and its check at the loop's end.
+    0x00692082: ('rt_block_tween', 0x006922BB, [(0x00692082, 569, '270ab716f033385d2993beefee7a93cf37b094c7')]),
+    0x006922BB: ('rt_block_tween_end', 0x006922BB, [(0x006922BB, 6, 'ebf3562eac0652d7fe29a79dd6ffddc36d6c4aad')]),
     # (its check at the loop's end, FF_NATIVE_CHECK=1 on the desktop; never takes over)
     0x006960BB: ('rt_block_particles_end', 0x006960BB, [(0x006960BB, 8, '8a49d7909a93879208dabc5306c3749a533bf082')]),
 }
