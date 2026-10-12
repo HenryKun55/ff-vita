@@ -56,6 +56,10 @@ if [ ! -d "$FS/vs0" ]; then
     [ -d "$MAIN/fs/ux0/user" ] && cp -R "$MAIN/fs/ux0/user/." "$FS/ux0/user/"
 fi
 sed "s|^pref-path:.*|pref-path: $FS|" "$MAIN/config.yml" > "$CONF"
+# Vita3K writes its settings back to the default config.yml even when started with
+# -c: keep the user's copy and put it back when this run ends.
+MAIN_CONF_SAVE="$HOME_QA/main-config.yml.save"
+cp "$MAIN/config.yml" "$MAIN_CONF_SAVE"
 
 # The app from this build, and the test copy of the game directory.
 rm -rf "$APP"
@@ -85,6 +89,8 @@ touch "$OUT"
 
 stop() {
     pkill -9 -f "$MATCH" 2>/dev/null
+    sleep 1
+    cp "$MAIN_CONF_SAVE" "$MAIN/config.yml"
     rm -f "$DATA/input.txt" "$DATA/shot_now.txt"
 }
 trap 'stop; exit 1' INT TERM
