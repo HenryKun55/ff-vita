@@ -107,6 +107,8 @@ NATIVE = {
     0x006067D0: ('rt_native_to_world', [(0x006067D0, 513, 'a510ca21ec2aa0abb3496ee1cce6368607ebae67')]),
     0x006065D0: ('rt_native_to_local', [(0x006065D0, 506, 'ea70591e177f15f028152800e9b6f5534a01d2c8')]),
     0x006069E0: ('rt_native_world_frame', [(0x006069E0, 545, 'cf5477da43c335ce2e5a9333bc28e55a99219a86')]),
+    # Oriented box overlap, 15 separating axes (runtime/src/native_obb.c).
+    0x005FDEA0: ('rt_native_obb_overlap', [(0x005FDEA0, 1861, '83e14f5028d4d919e84083a5b932f1465bd38578')]),
     # Unlit vertices into the lit-vertex buffer, colour halved (runtime/src/native_vcolor.c).
     0x00690D20: ('rt_native_copy_unlit', [(0x00690D20, 106, 'c97b35c903f9ca890ebeb8d2103af646509f5030')]),
 }
