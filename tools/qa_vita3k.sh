@@ -60,6 +60,9 @@ sed "s|^pref-path:.*|pref-path: $FS|" "$MAIN/config.yml" > "$CONF"
 # -c: keep the user's copy and put it back when this run ends.
 MAIN_CONF_SAVE="$HOME_QA/main-config.yml.save"
 cp "$MAIN/config.yml" "$MAIN_CONF_SAVE"
+# It also checks -r against the apps of the default config's pref-path (before it
+# reads -c): point that one at this file system too until the run ends.
+cp "$CONF" "$MAIN/config.yml"
 
 # The app from this build, and the test copy of the game directory.
 rm -rf "$APP"
