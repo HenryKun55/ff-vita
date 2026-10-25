@@ -97,18 +97,26 @@ add_executable(ff ${RUNTIME_SOURCES} ${SHIM_SOURCES})
 target_include_directories(ff PRIVATE runtime/include shim/include "${GEN_DIR}")
 target_compile_options(ff PRIVATE -Wall -Wextra -fwrapv -fno-strict-aliasing -fsigned-char)
 target_compile_definitions(ff PRIVATE FF_PORT_VERSION="${FF_PORT_VERSION}")
+# Generic check of the native functions (runtime/src/difftest.c): both versions run
+# on the same state and are compared. Diagnostic build (no FF_PROFILE / FF_WATCH).
+option(FF_DIFFTEST "Compare every native function with its recompiled code" OFF)
+if(FF_DIFFTEST)
+    target_compile_definitions(ff_recomp PUBLIC FF_DIFFTEST)
+    target_compile_definitions(ff PRIVATE FF_DIFFTEST)
+endif()
+
 # Sampling profiler (runtime/src/profile.c). No cost when OFF.
 option(FF_PROFILE "Build with the sampling profiler" OFF)
 if(FF_PROFILE)
     target_compile_definitions(ff_recomp PUBLIC FF_PROFILE)
     target_compile_definitions(ff PRIVATE FF_PROFILE)
-    # Store watch (runtime/include/recomp.h RT_WATCH): who writes a watched range.
     # Call counts of every generated function (calls.txt beside the profile).
     option(FF_CALLCOUNT "Count the calls of every generated function" OFF)
     if(FF_CALLCOUNT)
         target_compile_definitions(ff_recomp PUBLIC FF_CALLCOUNT)
         target_compile_definitions(ff PRIVATE FF_CALLCOUNT)
     endif()
+    # Store watch (runtime/include/recomp.h RT_WATCH): who writes a watched range.
     option(FF_WATCH "Report the guest functions storing into a watched range" OFF)
     if(FF_WATCH)
         target_compile_definitions(ff_recomp PUBLIC FF_WATCH)

@@ -90,8 +90,40 @@ void rt_watch_hit(const uint8_t *p, const void *v, unsigned n);
         if ((p) >= rt_watch_lo && (p) < rt_watch_hi) \
             rt_watch_hit((p), (v), (n)); \
     } while (0)
+#elif defined(FF_DIFFTEST)
+/* Difftest build (runtime/src/difftest.c): while this thread checks a native
+ * function, the recompiled code's stores are journaled (old bytes) so they can be
+ * undone before the native version runs on the same state. */
+extern int rt_jn_on;
+void rt_journal(const uint8_t *p, unsigned n);
+#define RT_WATCH(p, v, n) \
+    do { \
+        if (rt_jn_on) \
+            rt_journal((p), (n)); \
+    } while (0)
 #else
 #define RT_WATCH(p, v, n) ((void)0)
+#endif
+#if defined(FF_DIFFTEST)
+/* Host calls (imports, COM thunks) made by this thread: a check whose recompiled
+ * side made one is not undone (host writes are not journaled). */
+extern uint32_t rt_dt_imports;
+int rt_dt_hostcall(void);   /* counts it when made by the checking thread */
+#define RT_PREWRITE(p, n) RT_WATCH((p), 0, (n))
+#define RT_HOSTCALL() ((void)(rt_jn_on && rt_dt_hostcall()))
+#else
+#define RT_PREWRITE(p, n) ((void)0)
+#define RT_HOSTCALL() ((void)0)
+#endif
+/* Call of a native version from its function's entry: in the difftest build both
+ * versions run on the same state and are compared. */
+typedef int (*RtNativeFn)(struct Ctx *c, uint32_t esp, uint32_t ecx, uint32_t eax, uint64_t *ret);
+#if defined(FF_DIFFTEST)
+int rt_difftest(uint32_t addr, RtNativeFn fn, struct Ctx *c, uint32_t esp, uint32_t ecx, uint32_t eax,
+                uint64_t *ret);
+#define RT_NATIVE(addr, fn, c, esp, ecx, eax, ret) rt_difftest((addr), (fn), (c), (esp), (ecx), (eax), (ret))
+#else
+#define RT_NATIVE(addr, fn, c, esp, ecx, eax, ret) fn((c), (esp), (ecx), (eax), (ret))
 #endif
 static inline uint32_t rt_ld16(const uint8_t *p) { uint16_t v; memcpy(&v, p, 2); return v; }
 static inline uint32_t rt_ld32(const uint8_t *p) { uint32_t v; memcpy(&v, p, 4); return v; }
@@ -473,6 +505,7 @@ static inline __attribute__((always_inline)) RtStr rt_rep_movs(uint8_t *gm, uint
      * order is observable): out of line. Otherwise a forward copy equals memmove. */
     if (df || n == 0 || di - si < b)
         return rt_rep_movs_slow(gm, df, n, si, di, size);
+    RT_PREWRITE(gm + di, b);
     if (__builtin_constant_p(b) && b <= 64u && (b & 3u) == 0) {
         rt_move_small(gm + di, gm + si, b);
     } else if (size == 4 && n <= 8) {
@@ -495,6 +528,7 @@ static inline __attribute__((always_inline)) RtStr rt_rep_stos(uint8_t *gm, uint
     if (df || n == 0 || size == 2)
         return rt_rep_stos_slow(gm, df, n, di, v, size);
     uint32_t b = n * size;
+    RT_PREWRITE(gm + di, b);
     if (size == 4 && __builtin_constant_p(b) && b <= 64u) {
         rt_fill_small(gm + di, v, b);
 #if defined(__vita__)
@@ -576,7 +610,8 @@ typedef struct RtCallCount {
     (void)prof_pd;                                                      \
     (void)prof_prev
 #define PROF_EXIT (prof_p->depth = prof_pd, prof_p->cur = prof_prev)
-#define PROF_HOST(id) (prof_p->cur = (id))
+#define PROF_HOST(id) (RT_HOSTCALL(), prof_p->cur = (id))
+#define PROF_HOST_PURE(id) (prof_p->cur = (id))   /* an import that never writes guest memory */
 #define PROF_BACK(a) (prof_p->cur = (a))
 /* A setjmp returning through longjmp: this function is current again. */
 #define PROF_REENTER(a) (prof_p->depth = prof_pd + 1u, prof_p->cur = (a))
@@ -606,7 +641,8 @@ extern volatile uint32_t rt_prof_render;
 #define PROF_SECTION_END ((void)0)
 #define PROF_ENTER(a) ((void)0)
 #define PROF_EXIT ((void)0)
-#define PROF_HOST(id) ((void)0)
+#define PROF_HOST(id) RT_HOSTCALL()
+#define PROF_HOST_PURE(id) ((void)0)
 #define PROF_BACK(a) ((void)0)
 #define PROF_REENTER(a) ((void)0)
 #endif

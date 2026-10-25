@@ -231,8 +231,10 @@ uint32_t rt_wr_lo = 0xFFFFFFFFu, rt_wr_hi;
 RtStr rt_rep_movs_slow(uint8_t *gm, uint32_t df, uint32_t n, uint32_t si, uint32_t di, uint32_t size)
 {
     uint32_t step = df ? 0u - size : size;
-    if (n)
+    if (n) {
+        RT_PREWRITE(gm + (df ? di - (n - 1u) * size : di), n * size);
         RT_REPORT_WRITE(df ? di - (n - 1u) * size : di, n * size);
+    }
     for (; n; n--) {
         if (size == 1)
             gm[di] = gm[si];
@@ -250,8 +252,10 @@ RtStr rt_rep_movs_slow(uint8_t *gm, uint32_t df, uint32_t n, uint32_t si, uint32
 RtStr rt_rep_stos_slow(uint8_t *gm, uint32_t df, uint32_t n, uint32_t di, uint32_t v, uint32_t size)
 {
     uint32_t step = df ? 0u - size : size;
-    if (n)
+    if (n) {
+        RT_PREWRITE(gm + (df ? di - (n - 1u) * size : di), n * size);
         RT_REPORT_WRITE(df ? di - (n - 1u) * size : di, n * size);
+    }
     for (; n; n--) {
         if (size == 1)
             gm[di] = (uint8_t)v;
@@ -369,6 +373,7 @@ void rt_dispatch(Ctx *c, uint32_t target)
     if (target >= THUNK_BASE && target < THUNK_BASE + THUNK_MAX * THUNK_STRIDE) {
         fn = thunk_lookup(target);
         if (fn) {
+            RT_HOSTCALL();
 #ifdef FF_PROFILE
             uint32_t prof_prev = c->prof->cur;
             c->prof->cur = target;
@@ -403,6 +408,7 @@ void rt_x87_mismatch(Ctx *c, uint32_t addr, uint32_t expect)
 static inline uint64_t call_thunk(Ctx *c, uint32_t target, uint32_t esp, uint32_t ecx, uint32_t eax)
 {
     const GuestFunc *e = thunk_entry(target);
+    RT_HOSTCALL();
     if (e)
         return e->fast(c, esp, ecx, eax);
     c->r[0] = eax;
@@ -420,7 +426,10 @@ uint64_t rt_call_indirect_ic(Ctx *c, uint32_t target, uint32_t esp, uint32_t ecx
     if (target - THUNK_BASE < THUNK_MAX * THUNK_STRIDE) {
         const GuestFunc *e = thunk_entry(target);
         if (e) {
-            *ic = e;
+            RT_HOSTCALL();
+#if !defined(FF_DIFFTEST)
+            *ic = e;   /* (difftest: not cached, so every host call is counted) */
+#endif
             return e->fast(c, esp, ecx, eax);
         }
         return call_thunk(c, target, esp, ecx, eax);
