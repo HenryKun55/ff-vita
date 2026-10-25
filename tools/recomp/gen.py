@@ -63,6 +63,15 @@ IMPORT_X87 = {
     'log10': 1, 'fmod': 1, 'modf': 1, 'frexp': 1,
 }
 
+# Imports that read guest memory but never write it (results in registers only):
+# the difftest build (runtime/src/difftest.c) can still check a function calling them.
+PURE_IMPORTS = {'strchr', 'strrchr', 'strstr', 'strpbrk', 'strcmp', 'strncmp', '_stricmp', '_strcmpi',
+                '_strnicmp', '_memicmp', 'memcmp', 'memchr', 'strlen', 'tolower', 'toupper', 'isalpha',
+                'isdigit', 'isspace', 'isalnum', 'isupper', 'islower', 'abs', 'labs', 'floor', 'ceil', 'fabs',
+                'sqrt', 'pow', 'sin', 'cos', 'tan', 'atan', 'atan2', 'asin', 'acos', 'exp', 'log', 'log10',
+                'fmod', '_CIpow', '_CIsin', '_CIcos', '_CItan', '_CIatan', '_CIatan2', '_CIsqrt', '_CIexp',
+                '_CIlog', '_CIlog10', '_CIfmod', '_ftol', 'atoi', 'atol', 'atof'}
+
 NORETURN_IMPORTS = {'ExitProcess', 'TerminateProcess', 'RaiseException', 'exit', '_exit', '_CxxThrowException',
                     '?terminate@@YAXXZ'}
 
@@ -97,6 +106,36 @@ NATIVE = {
     # Vertex colours into the lighting factors, and the lit colours back (runtime/src/native_vcolor.c).
     0x00691410: ('rt_native_colors_in', [(0x00691410, 413, 'a1401185b69977956634161713acd5dfcaab5386')]),
     0x006915B0: ('rt_native_colors_out', [(0x006915B0, 304, '78b1f8422fece34b16771082210a98e851f7de45')]),
+    # Point query through the collision octree (runtime/src/native_octree_point.c).
+    0x00616B70: ('rt_native_octree_point', [(0x00616B70, 344, '0c229cd668d5f9631e6c736d760c7567fd4f0eb8')]),
+    # 3x3 matrix product (runtime/src/native_mat3.c).
+    0x005F8A90: ('rt_native_mat3_mul', [(0x005F8A90, 341, '94fcea56d5eb13fc5bb0bcfb70bedd13c7b928a0')]),
+    # Path finder's neighbour step (runtime/src/native_path_relax.c).
+    0x00571100: ('rt_native_path_relax', [(0x00571100, 522, '292584952a286661b8ac0b266fe034e91213865b')]),
+    # GeomRefToPtr (runtime/src/native_geomref.c).
+    0x0067EA90: ('rt_native_geomref_to_ptr', [(0x0067EA90, 154, '9049fbccb760ce32b747323921c5510029b8ed3d')]),
+    # Integer cell octree: box walk with a visitor, cursor step (runtime/src/native_cell_tree.c).
+    0x0056C880: ('rt_native_cell_tree_walk', [(0x0056C880, 1133, '797a7c9330cfb87b05ed01e10623169f6bfd8a2f')]),
+    0x0056DB30: ('rt_native_cell_cursor_step', [(0x0056DB30, 465, '995b7a2193701222f0e2f10ae2c548c69a49cad5')]),
+    # Block list iterator step (runtime/src/native_block_iter.c).
+    0x005F37C0: ('rt_native_block_iter', [(0x005F37C0, 145, '8611f7c90bf61d4b118f9ddad260b222bd985260')]),
+    # Binary tree lower bound (runtime/src/native_tree_lb.c).
+    0x00622850: ('rt_native_tree_lb', [(0x00622850, 118, 'eecf08fed84a6e805da5b28a1445632885556b70')]),
+    # Pixel format: channel shifts from the masks, one pixel converted (runtime/src/native_pixfmt.c).
+    0x006185C0: ('rt_native_pixfmt_convert', [(0x006185C0, 159, '7a13196fc8d00ef0789ac515b4165ace8dabbc15')]),
+    0x00618660: ('rt_native_pixfmt_init', [(0x00618660, 83, 'a0c18706056363adea2992375f5271073e680ca4')]),
+    # In-place 3x3 matrix product (runtime/src/native_mat3_inplace.c).
+    0x005F87F0: ('rt_native_mat3_mul_inplace', [(0x005F87F0, 307, '5746ca5f8168db1f4ca7d20f0f8ae67f3a9c1007')]),
+    # Ray / triangle intersection (runtime/src/native_ray_tri.c).
+    0x006002A0: ('rt_native_ray_tri', [(0x006002A0, 721, '70e6b296070ed95c86e06ce068b31c24f8ba4f40')]),
+    # Box query through the collision octree, whole subtrees (runtime/src/native_octree_box.c).
+    0x006164F0: ('rt_native_octree_box', [(0x006164F0, 592, '007bb97e375b8e8554457312ee97f644fd6b8635'), (0x00616740, 119, '7dc685a0009c545ebf3f47f6d5280c4afc43f6f5')]),
+    0x00616740: ('rt_native_octree_all', [(0x00616740, 119, '7dc685a0009c545ebf3f47f6d5280c4afc43f6f5')]),
+    # Segment query through a quadtree, segment / rectangle test (runtime/src/native_quad_segment.c).
+    0x00614CE0: ('rt_native_quad_segment', [(0x00614CE0, 451, '4929dcf6329193f20dbc56f611f4b21e5af6d29a'), (0x00614EB0, 315, '4e32b015098e8675fb76d122fa6443ba54c0f6c9'), (0x005FF460, 723, '65773ff6c1f03992cbff624ae5cfcaff2362de31')]),
+    0x00614EB0: ('rt_native_quad_rect', [(0x00614EB0, 315, '4e32b015098e8675fb76d122fa6443ba54c0f6c9')]),
+    # Wildcard name match (runtime/src/native_strings.c).
+    0x005F1C90: ('rt_native_wildcard', [(0x005F1C90, 297, '1e347a910a75e13e8b2fbea9335192ab0b0dfd43')]),
     # Visibility of a list of objects against the view planes and portal groups (runtime/src/native_cull.c).
     0x0058DE80: ('rt_native_cull', [(0x0058DE80, 2388, '649e81c2292270774e5eba80ea6098caaf09d4e4')]),
     # Vector transforms up the scene graph's parent chain (runtime/src/native_xform.c).
@@ -1887,7 +1926,8 @@ class FuncGen:
         """Call of a host import; under FF_PROFILE the profiler attributes the time to
         the import (identified by its IAT slot)."""
         slot = ins.ops[0].mem.disp & 0xFFFFFFFF
-        return 'PROF_HOST(%s); %s(c); PROF_BACK(%s);' % (h(slot), self.g.import_fn(imp), h(self.fn.entry))
+        prof = 'PROF_HOST_PURE' if imp[1] in PURE_IMPORTS else 'PROF_HOST'
+        return '%s(%s); %s(c); PROF_BACK(%s);' % (prof, h(slot), self.g.import_fn(imp), h(self.fn.entry))
 
     def i_ret(self, ins):
         n = 4 + (ins.ops[0].imm if ins.ops else 0)
@@ -2252,7 +2292,7 @@ class Generator:
             body = ['    c->r[0] = eax; c->r[1] = ecx; c->r[4] = esp; rt_probe(c, 0x%08Xu);' % entry] + body
         hle = self.hle.get(entry)
         if hle:
-            body = ['    { uint64_t hr; if (%s(c, esp, ecx, eax, &hr)) { return hr; } }' % hle] + body
+            body = ['    { uint64_t hr; if (RT_NATIVE(%s, %s, c, esp, ecx, eax, &hr)) { return hr; } }' % (h(entry), hle)] + body
         # Profiler hooks (empty unless FF_PROFILE): every exit restores the caller.
         body = [re.sub(r'\breturn\b', 'PROF_EXIT; return', line) for line in body]
         text = '\n'.join(body)

@@ -27,8 +27,16 @@ measure, rewrite what costs, verify, measure again.
    `/Freedom.Exe.0`) for what a function does, callers and structures; the x87
    disassembly for the exact operation order (the decompiler reorders sums).
 3. **Verify**:
-   - `FF_NATIVE_CHECK=1` (native and recompiled run on the same state, results
-     compared; desktop build);
+   - the difftest build (`-DFF_DIFFTEST=ON`, runtime/src/difftest.c), for every
+     native at once: on sampled calls the recompiled function runs first with its
+     stores journaled, is undone, the native runs on the same state, and eax/esp,
+     the callee-saved registers, the x87 top and every byte the recompiled side
+     wrote must match (dead stack and argument slots reported apart, float words
+     within a few ulps counted as roundings). ff.cfg `difftest_first=` /
+     `difftest_every=`; per-function summaries in the log. A call whose
+     recompiled side makes a host call (import other than the pure string/math
+     ones, COM/D3D method) is not checked, so natives must not call D3D;
+   - `FF_NATIVE_CHECK=1` / ff.cfg `native_check=1` (the older per-native checks);
    - for anything that writes vertex buffers, `stats=2` (vertex buffer verifier)
      and the store watch (`-DFF_WATCH=ON` builds);
    - screenshots of the scene set.
@@ -49,6 +57,24 @@ scripts are anchored on a later key press and checked by screenshot):
 | A cutscene | animation, video, 2D |
 | Main menu / loading | menu code, file loading |
 | A later outdoor level (C02/C03) | large draw distance, squads |
+
+## Choosing what to convert
+
+- `-DFF_PROFILE=ON -DFF_CALLCOUNT=ON` counts the calls of every generated
+  function (ux0:data/ff/calls.txt, reset with the profile).
+- `tools/recomp/status.py --calls calls*.txt` gives the share of the code and of
+  the calls that is native and the hottest functions still recompiled.
+- `tools/recomp/hot.py` writes tools/recomp/hot_order.ld: the most called
+  generated functions are linked together (instruction cache / TLB on the
+  console; no effect in Vita3K).
+- Functions are converted in batches (a brief for each converter:
+  decompile with Ghidra, x87 order from the disassembly, exact memory effects,
+  guest calls kept as guest calls), then all checked with the difftest build.
+
+Lesson (as in the sotc port): small leaf functions, even called a million times,
+save little on their own: the call stays. 2026-10-25, 18 new natives (4.6% ->
+24.9% of the calls native): no measurable change at 222 MHz in Vita3K. The gains
+come from whole subsystems made native from their top.
 
 ## Wave 1: hand native, hot math (status)
 
