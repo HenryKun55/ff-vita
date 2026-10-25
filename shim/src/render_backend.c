@@ -150,6 +150,9 @@ static int client_slot(GLenum cap)
     }
 }
 
+/* Depth state calls that reached vitaGL (each is several sceGxm calls there). */
+static uint32_t n_gl_depth;
+
 static void c_enable(GLenum cap, int on)
 {
     const int slot = enable_slot(cap);
@@ -164,6 +167,8 @@ static void c_enable(GLenum cap, int on)
         if (!cache_set(0x10000000u ^ unit_key(cap), &v, 1))
             return;
     }
+    if (cap == GL_DEPTH_TEST || cap == GL_POLYGON_OFFSET_FILL)
+        n_gl_depth++;
     if (on)
         (glEnable)(cap);
     else
@@ -199,15 +204,29 @@ static void c_blend(GLenum s, GLenum d)
 static void c_depthfunc(GLenum f)
 {
     float v = (float)f;
-    if (cache_set(0x30000002u, &v, 1))
+    if (cache_set(0x30000002u, &v, 1)) {
+        n_gl_depth++;
         (glDepthFunc)(f);
+    }
 }
 
 static void c_depthmask(GLboolean m)
 {
     float v = (float)m;
-    if (cache_set(0x30000003u, &v, 1))
+    if (cache_set(0x30000003u, &v, 1)) {
+        n_gl_depth++;
         (glDepthMask)(m);
+    }
+}
+
+/* (vitaGL sets the GXM depth bias again on every call.) */
+static void c_polygonoffset(GLfloat factor, GLfloat units)
+{
+    float v[2] = { factor, units };
+    if (cache_set(0x30000010u, v, 2)) {
+        n_gl_depth++;
+        (glPolygonOffset)(factor, units);
+    }
 }
 
 static void c_alphafunc(GLenum f, GLfloat ref)
@@ -332,6 +351,7 @@ static void c_fogfv(GLenum pname, const GLfloat *value)
 #define glBlendFunc c_blend
 #define glDepthFunc c_depthfunc
 #define glDepthMask c_depthmask
+#define glPolygonOffset c_polygonoffset
 #define glAlphaFunc c_alphafunc
 #define glCullFace c_cullface
 #define glFrontFace c_frontface
@@ -998,6 +1018,21 @@ void bk_lights(const void *p)
     light_in_new = 1;
 }
 
+/* Profiler: which part of bk_draw the render thread is in (FF_PROFILE). */
+#ifdef FF_PROFILE
+#define BK_PROF(id) do { if (rq_on) rt_prof_render = (id); } while (0)
+#else
+#define BK_PROF(id) ((void)0)
+#endif
+/* (ids past recomp.h's list, named in profile.c) */
+#define PROF_H_BK_FOG 0xFD000017u
+#define PROF_H_BK_LIGHTS 0xFD000018u
+#define PROF_H_BK_DEPTH 0xFD000019u
+#define PROF_H_BK_BLEND 0xFD00001Au
+#define PROF_H_BK_CULL 0xFD00001Bu
+/* How often the render states and the lights are really sent (logged with stats). */
+static uint32_t n_states_sent, n_lights_sent, n_draws_seen;
+
 static void apply_lights(void)
 {
     if (!light_in_new)
@@ -1008,6 +1043,7 @@ static void apply_lights(void)
         return;
     light_snap = *cur;
     light_snap_valid = 1;
+    n_lights_sent++;
 
     float amb[4];
     color4(cur->ambient, amb);
@@ -1133,8 +1169,14 @@ static void apply_states(const DrawCmd *d)
     uint32_t diff = !valid || changes_after != rs_changes || (lit && light_in_new);
     for (int i = 0; i < N; i++)
         diff |= k[i] ^ o[i];
+    if (++n_draws_seen == 20000u) {
+        rt_log("backend: of %u draws, render states sent for %u, lights for %u; %u depth state calls to GL",
+               n_draws_seen, n_states_sent, n_lights_sent, n_gl_depth);
+        n_draws_seen = n_states_sent = n_lights_sent = n_gl_depth = 0;
+    }
     if (!diff)
         return;
+    n_states_sent++;
     apply_states_now(d);
     last ^= 1;
     changes_after = rs_changes;
@@ -1202,6 +1244,7 @@ static float decal_dz;   /* depth range shift of the current draw (Vita) */
 static void apply_states_now(const DrawCmd *d)
 {
     const int pretransformed = d->L.pretransformed;
+    BK_PROF(PROF_H_BK_DEPTH);
     if (B.diag == DIAG_DEPTH_LEQUAL && !pretransformed) {
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LEQUAL);
@@ -1235,6 +1278,7 @@ static void apply_states_now(const DrawCmd *d)
 #if defined(__vita__)
     decal_dz = zb && !pretransformed ? zbias_depth_step() * (float)zb : 0.0f;
 #endif
+    BK_PROF(PROF_H_BK_BLEND);
     if (d->blend) {
         glEnable(GL_BLEND);
         uint32_t sb = d->srcblend, db = d->destblend;
@@ -1261,6 +1305,7 @@ static void apply_states_now(const DrawCmd *d)
     } else {
         glDisable(GL_ALPHA_TEST);
     }
+    BK_PROF(PROF_H_BK_CULL);
     if (d->cullmode == 1u || pretransformed || B.cull_override == 1 || B.diag == DIAG_NO_CULL) {
         glDisable(GL_CULL_FACE);
     } else {
@@ -1271,6 +1316,7 @@ static void apply_states_now(const DrawCmd *d)
     glShadeModel(d->shademode == 1u ? GL_FLAT : GL_SMOOTH);
     glPolygonMode(GL_FRONT_AND_BACK, d->fillmode == 2u ? GL_LINE : d->fillmode == 1u ? GL_POINT : GL_FILL);
 
+    BK_PROF(PROF_H_BK_FOG);
     if (d->fog && B.diag != DIAG_NO_FOG) {
         glEnable(GL_FOG);
         float fc[4];
@@ -1321,6 +1367,7 @@ static void apply_states_now(const DrawCmd *d)
         glDisable(GL_FOG);
     }
 
+    BK_PROF(PROF_H_BK_LIGHTS);
     if (!pretransformed && d->lighting && d->L.has_normal && B.diag != DIAG_NO_LIGHTING) {
         glEnable(GL_LIGHTING);
         apply_lights();
@@ -1424,6 +1471,7 @@ void bk_draw(const void *cmd)
     if (B.diag == DIAG_NO_BLENDED && d->blend)
         return;
     uint64_t t0 = bk_now();
+    BK_PROF(PROF_H_BK_BUF);
 #if defined(__vita__)
     /* The arena buffer objects point at this draw's data (no copy in vitaGL). */
     if (A->vbo_data) {
@@ -1435,9 +1483,13 @@ void bk_draw(const void *cmd)
         vglBufferData(GL_ELEMENT_ARRAY_BUFFER, A->ibo_data);
     }
 #endif
+    BK_PROF(PROF_H_BK_STATES);
     apply_states(d);
+    BK_PROF(PROF_H_BK_STAGES);
     int stages = apply_stages(d);
+    BK_PROF(PROF_H_BK_XFORM);
     apply_transforms(d);
+    BK_PROF(PROF_H_BK_PTRS);
 
     /* Pointers are offsets into A->vbo while it is bound (vitaGL and GL record
      * the binding with each pointer). */
@@ -1519,6 +1571,7 @@ void bk_draw(const void *cmd)
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     uint64_t t1 = bk_now();
     t_state_us += t1 - t0;
+    BK_PROF(PROF_H_BK_DRAW);
 
 #ifdef FF_PROFILE
     if (!rq_on)
@@ -1539,6 +1592,7 @@ void bk_draw(const void *cmd)
     if (L->use_color)
         color_cache_valid = 0;   /* GL leaves the current color undefined after a color array */
     t_gl_us += bk_now() - t1;
+    BK_PROF(PROF_H_STATE);
 }
 
 /* ---- on-screen performance overlay ---------------------------------------- */

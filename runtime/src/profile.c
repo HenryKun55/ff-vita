@@ -174,7 +174,11 @@ static const char *name_of(uint32_t id, char *buf, size_t n)
                                         "texture", "blit", "audio mix", "index scan", "fill (render target)",
                                         "fill (memory surface)", "blit (memory surface)",
                                         "render thread idle (waiting for the game thread)",
-                                        "render thread swap (vsync, GPU)", "render thread other commands" };
+                                        "render thread swap (vsync, GPU)", "render thread other commands",
+                                        "draw: buffer objects", "draw: render states", "draw: texture stages",
+                                        "draw: transforms", "draw: vertex pointers", "draw: gl draw call",
+                                        "draw: fog", "draw: lights", "draw: depth/offset",
+                                        "draw: blend/alpha", "draw: cull/shade/fill" };
     if ((id & 0xFFFFFF00u) == 0xFD000000u && (id & 0xFFu) < sizeof(host) / sizeof(host[0])) {
         snprintf(buf, n, "host %s", host[id & 0xFFu]);
         return buf;
