@@ -224,8 +224,38 @@ static void dump_map(FILE *f, const Map *m, const char *title, int is_pair, uint
     }
 }
 
+#if defined(FF_CALLCOUNT) && defined(__ELF__)
+/* The generated functions' counters (PROF_COUNT in recomp.h), bounds from the linker. */
+extern RtCallCount __start_ff_calls[], __stop_ff_calls[];
+#if defined(__vita__)
+#define CALLS_PATH "ux0:data/ff/calls.txt"
+#else
+#define CALLS_PATH "ff_calls.txt"
+#endif
+static void calls_reset(void)
+{
+    for (RtCallCount *p = __start_ff_calls; p < __stop_ff_calls; p++)
+        p->n = 0;
+}
+/* "address count" of every function called since the last reset (tools/recomp/hot.py). */
+static void calls_dump(void)
+{
+    FILE *f = fopen(CALLS_PATH, "w");
+    if (!f)
+        return;
+    for (const RtCallCount *p = __start_ff_calls; p < __stop_ff_calls; p++)
+        if (p->n)
+            fprintf(f, "%08X %u\n", p->addr, p->n);
+    fclose(f);
+}
+#else
+static void calls_reset(void) {}
+static void calls_dump(void) {}
+#endif
+
 static void dump(void)
 {
+    calls_dump();
     FILE *f = fopen(PROFILE_PATH, "w");
     if (!f)
         return;
@@ -257,6 +287,7 @@ static void sampler_loop(void)
             memset(&pairs, 0, sizeof(pairs));
             memset(&edges, 0, sizeof(edges));
             memset(&render_excl, 0, sizeof(render_excl));
+            calls_reset();
             total = 0;
             n_pend = 0;
             frames_kept = frames_seen = 0;

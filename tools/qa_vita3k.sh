@@ -15,6 +15,7 @@
 # env:   BUILD   Vita build directory (default build-vita)
 #        SCENE   start scene (default SinglePlayer\C01A\FF-C01A_MAIN.gms)
 #        MHZ     emulated CPU clock (default 444; the timing then resembles hardware's)
+#        CORES   guest threads running at once (VITA3K_CORES; the Vita has 3)
 #        CFG     contents of ux0:data/ff/ff.cfg for the run (default none)
 #        INI     "Key value;..." settings for the test copy's Freedom.ini
 #        VITA3K  Vita3K binary (default the local source build)
@@ -56,13 +57,11 @@ if [ ! -d "$FS/vs0" ]; then
     [ -d "$MAIN/fs/ux0/user" ] && cp -R "$MAIN/fs/ux0/user/." "$FS/ux0/user/"
 fi
 sed "s|^pref-path:.*|pref-path: $FS|" "$MAIN/config.yml" > "$CONF"
-# Vita3K writes its settings back to the default config.yml even when started with
-# -c: keep the user's copy and put it back when this run ends.
+# VITA3K_PREF_PATH (the local Vita3K build) sets this run's file system whatever the
+# default config.yml says, and leaves that file alone (other ports' runners share it).
+# Kept as a safety net: the user's copy is put back when this run ends.
 MAIN_CONF_SAVE="$HOME_QA/main-config.yml.save"
 cp "$MAIN/config.yml" "$MAIN_CONF_SAVE"
-# It also checks -r against the apps of the default config's pref-path (before it
-# reads -c): point that one at this file system too until the run ends.
-cp "$CONF" "$MAIN/config.yml"
 
 # The app from this build, and the test copy of the game directory.
 rm -rf "$APP"
@@ -101,7 +100,7 @@ trap 'stop; exit 1' INT TERM
 WINID_BIN=${TMPDIR:-/tmp}/ff_window_id
 [ "$WINID_BIN" -nt "$ROOT/tools/window_id.swift" ] || swiftc -O "$ROOT/tools/window_id.swift" -o "$WINID_BIN" || exit 1
 
-(VITA3K_CPU_MHZ=${MHZ:-444} "$VITA3K" -c "$CONF" -w -r FFRD00001 > "$LOG" 2>&1 &)
+(VITA3K_PREF_PATH="$FS/" VITA3K_CPU_MHZ=${MHZ:-444} VITA3K_CORES=${CORES:-} "$VITA3K" -c "$CONF" -w -r FFRD00001 > "$LOG" 2>&1 &)
 started=0
 while [ $started -lt 30 ] && ! pgrep -f "$MATCH" > /dev/null; do
     sleep 1

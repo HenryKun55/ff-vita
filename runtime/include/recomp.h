@@ -552,7 +552,21 @@ typedef struct RtProf {
 extern RtProf rt_prof_main;
 /* Host code without a guest context (the renderer's sections) bills the main thread. */
 #define rt_prof_cur (rt_prof_main.cur)
+/* Call counts (FF_CALLCOUNT, with FF_PROFILE): one counter per generated function in
+ * section ff_calls, written next to the profile (calls.txt) and reset with it. They
+ * pick the hot set the code layout and the native work go after. */
+#ifdef FF_CALLCOUNT
+typedef struct RtCallCount {
+    uint32_t addr, n;
+} RtCallCount;
+#define PROF_COUNT(a)                                                                      \
+    static RtCallCount prof_cc __attribute__((section("ff_calls"), used, aligned(8))) = {(a), 0}; \
+    prof_cc.n++
+#else
+#define PROF_COUNT(a) ((void)0)
+#endif
 #define PROF_ENTER(a)                                                   \
+    PROF_COUNT(a);                                                      \
     RtProf *const prof_p = c->prof;                                     \
     const uint32_t prof_pd = prof_p->depth, prof_prev = prof_p->cur;    \
     if (prof_pd < RT_PROF_MAX)                                          \
